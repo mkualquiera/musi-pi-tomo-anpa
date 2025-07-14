@@ -73,4 +73,12 @@ impl Transform {
             raw: mat.to_cols_array_2d(),
         }
     }
+
+    pub fn set_origin(&self, other: &Self) -> Self {
+        let mat = self.matrix * other.matrix.inverse();
+        Self {
+            matrix: mat,
+            raw: mat.to_cols_array_2d(),
+        }
+    }
 }

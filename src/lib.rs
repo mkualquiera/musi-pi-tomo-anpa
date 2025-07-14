@@ -2,6 +2,7 @@ mod audio;
 mod collision;
 mod game;
 mod geometry;
+mod ortographic_camera;
 mod renderer;
 
 use core::panic;
