@@ -99,13 +99,17 @@ impl Game {
     }
 
     pub fn init(rendering_system: &mut RenderingSystem, audio_system: &mut AudioSystem) -> Self {
+        let mut rng = StdRng::from_seed([0; 32]); // Seed with zeros for reproducibility
         Self {
             player: Player::new(Vec2::new(0.0, 0.0)),
-            objects: Vec::from([
-                Vec2::new(9.0, 4.0),
-                Vec2::new(7.0, 1.0),
-                Vec2::new(-3.0, -2.0),
-            ]),
+            //objects: Vec::from([
+            //    Vec2::new(9.0, 4.0),
+            //    Vec2::new(7.0, 1.0),
+            //    Vec2::new(-3.0, -2.0),
+            //]),
+            objects: (0..400)
+                .map(|_| Vec2::new(rng.random_range(-10.0..10.0), rng.random_range(-10.0..10.0)))
+                .collect(),
             camera: {
                 let (width, height) = Game::target_size();
                 OrthoCamera::new(width as f32, height as f32, 32.0)
@@ -143,21 +147,23 @@ impl Game {
             .set_origin(&self.player.local_space(&Transform::new()));
 
         // Draw objects
-        for object in &self.objects {
-            drawer.draw_square_slow(
-                Some(&view_transform.translate(Vec3::new(object.x, object.y, 0.0))),
-                Some(&EngineColor::RED),
-                GizmoSprite {
-                    texture: &self.player_texture,
-                    sprite_spec: SpriteSpec {
-                        use_texture: 1,
-                        region_start: [0.0, 0.0],
-                        region_end: [1.0, 1.0],
-                        num_tiles: [3, 4],
-                        selected_tile: [1, 0],
+        for i in 0..1 {
+            for object in &self.objects {
+                drawer.draw_square_slow(
+                    Some(&view_transform.translate(Vec3::new(object.x, object.y, 0.0))),
+                    Some(&EngineColor::RED),
+                    GizmoSprite {
+                        texture: &self.player_texture,
+                        sprite_spec: SpriteSpec {
+                            use_texture: 1,
+                            region_start: [0.0, 0.0],
+                            region_end: [1.0, 1.0],
+                            num_tiles: [3, 4],
+                            selected_tile: [1, 0],
+                        },
                     },
-                },
-            );
+                );
+            }
         }
 
         let frames = [0, 1, 2, 1];
