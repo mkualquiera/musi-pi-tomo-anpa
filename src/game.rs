@@ -141,10 +141,12 @@ impl Game {
             a: 1.0,
         });
 
-        let view_transform = self
-            .camera
-            .get_transform()
-            .set_origin(&self.player.local_space(&Transform::new()));
+        let view_transform = self.camera.get_transform().set_origin(
+            &self
+                .player
+                .local_space(&Transform::new())
+                .translate(Vec3::new(0.5, 0.5, 0.0)),
+        );
 
         // Draw objects
         for i in 0..1 {
