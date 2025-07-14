@@ -17,7 +17,7 @@ use winit::window::Window;
 use crate::{
     game::Game,
     geometry::Transform,
-    renderer::gizmo::{GizmoBindableTexture, GizmoRenderPipeline},
+    renderer::gizmo::{GizmoBindableTexture, GizmoRenderPipeline, GizmoSprite},
 };
 
 #[repr(C)]
@@ -327,7 +327,7 @@ impl<'a> Drawer<'a> {
         num_indices: u32,
         transform: Option<&Transform>,
         color: Option<&EngineColor>,
-        texture: &GizmoBindableTexture,
+        texture: GizmoSprite,
     ) {
         if let Some(t) = transform {
             self.apply_gizmo_transform(t);
@@ -344,6 +344,16 @@ impl<'a> Drawer<'a> {
                 a: 1.0,
             });
         }
+
+        let GizmoSprite {
+            texture,
+            sprite_spec,
+        } = texture;
+
+        self.renderer
+            .gizmo_pipeline
+            .write_sprite_spec(&self.renderer.queue, sprite_spec);
+
         let mut encoder =
             self.renderer
                 .device
@@ -385,7 +395,7 @@ impl<'a> Drawer<'a> {
         &mut self,
         transform: Option<&Transform>,
         color: Option<&EngineColor>,
-        texture: &GizmoBindableTexture,
+        texture: GizmoSprite,
     ) {
         //self.draw_geometry_slow(vertices, indices, count, transform, color);
         self.renderer.gizmo_pipeline.with_quad_geometry(

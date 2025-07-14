@@ -8,17 +8,28 @@ use crate::{
     collision::Collision,
     geometry::Transform,
     ortographic_camera::OrthoCamera,
-    renderer::{gizmo::GizmoBindableTexture, Drawer, EngineColor, RenderingSystem},
+    renderer::{
+        gizmo::{GizmoBindableTexture, GizmoSprite, SpriteSpec},
+        Drawer, EngineColor, RenderingSystem,
+    },
     InputSystem,
 };
 
 pub struct Player {
     pub position: Vec2,
+    pub walking_index: u8,
+    pub walking_counter: f32,
+    pub direction: u8,
 }
 
 impl Player {
     pub fn new(position: Vec2) -> Self {
-        Self { position }
+        Self {
+            position,
+            walking_index: 0,
+            walking_counter: 0.0,
+            direction: 0, // 0: down, 1: left, 2: up, 3: right
+        }
     }
 
     const PLAYER_SPEED: f32 = 4.0;
@@ -28,20 +39,42 @@ impl Player {
         let mut player_direction = Vec2::ZERO;
         if input.is_physical_key_down(KeyCode::KeyW) {
             player_direction.y -= 1.0;
+            //self.direction = 2; // up
         }
         if input.is_physical_key_down(KeyCode::KeyS) {
             player_direction.y += 1.0;
+            //self.direction = 0; // down
         }
         if input.is_physical_key_down(KeyCode::KeyA) {
             player_direction.x -= 1.0;
+            //self.direction = 3; // left
         }
         if input.is_physical_key_down(KeyCode::KeyD) {
             player_direction.x += 1.0;
+            //self.direction = 1; // right
         }
         if player_direction.length() > 0.0 {
             player_direction = player_direction.normalize();
             player_direction *= speed;
+            if player_direction.x < 0.0 {
+                self.direction = 3; // left
+            } else if player_direction.x > 0.0 {
+                self.direction = 1; // right
+            } else if player_direction.y < 0.0 {
+                self.direction = 2; // up
+            } else if player_direction.y > 0.0 {
+                self.direction = 0; // down
+            }
             self.position += player_direction;
+            self.walking_counter += delta_time;
+            if self.walking_counter > 0.15 {
+                self.walking_counter = 0.0;
+                self.walking_index = (self.walking_index + 1) % 4;
+            }
+        } else {
+            self.walking_counter = 0.0;
+            self.walking_index = 1;
+            self.direction = 0; // reset direction to down when idle
         }
     }
 
@@ -72,7 +105,7 @@ impl Game {
             ]),
             camera: {
                 let (width, height) = Game::target_size();
-                OrthoCamera::new(width as f32, height as f32, 20.0)
+                OrthoCamera::new(width as f32, height as f32, 32.0)
             },
             player_texture: rendering_system
                 .gizmo_texture_from_encoded_image(include_bytes!("assets/char_template.png")),
@@ -96,15 +129,38 @@ impl Game {
             drawer.draw_square_slow(
                 Some(&view_transform.translate(Vec3::new(object.x, object.y, 0.0))),
                 Some(&EngineColor::RED),
-                &self.player_texture,
+                GizmoSprite {
+                    texture: &self.player_texture,
+                    sprite_spec: SpriteSpec {
+                        use_texture: 1,
+                        region_start: [0.0, 0.0],
+                        region_end: [1.0, 1.0],
+                        num_tiles: [3, 4],
+                        selected_tile: [1, 0],
+                    },
+                },
             );
         }
+
+        let frames = [0, 1, 2, 1];
 
         // draw player as a square
         drawer.draw_square_slow(
             Some(&self.player.local_space(&view_transform)),
             Some(&EngineColor::WHITE),
-            &self.player_texture,
+            GizmoSprite {
+                texture: &self.player_texture,
+                sprite_spec: SpriteSpec {
+                    use_texture: 1,
+                    region_start: [0.0, 0.0],
+                    region_end: [1.0, 1.0],
+                    num_tiles: [3, 4],
+                    selected_tile: [
+                        frames[self.player.walking_index as usize] as u32,
+                        self.player.direction as u32,
+                    ],
+                },
+            },
         );
     }
 }

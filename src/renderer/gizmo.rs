@@ -17,6 +17,11 @@ pub struct GizmoBindableTexture {
     pub bind_group: BindGroup,
 }
 
+pub struct GizmoSprite<'a> {
+    pub texture: &'a GizmoBindableTexture,
+    pub sprite_spec: SpriteSpec,
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
@@ -51,14 +56,42 @@ impl Vertex {
     }
 }
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+//#[repr(C)]
+//#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct SpriteSpec {
     pub use_texture: u32,
     pub region_start: [f32; 2],
     pub region_end: [f32; 2],
     pub num_tiles: [u32; 2],
     pub selected_tile: [u32; 2],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct SpriteSpecPadded {
+    pub use_texture_and_padding: [u32; 4], // use_texture in [0], rest unused
+    pub region_start_and_end: [f32; 4],    // start in [0,1], end in [2,3]
+    pub tiles_info: [u32; 4],              // num_tiles in [0,1], selected in [2,3]
+}
+
+impl From<SpriteSpec> for SpriteSpecPadded {
+    fn from(spec: SpriteSpec) -> Self {
+        Self {
+            use_texture_and_padding: [spec.use_texture, 0, 0, 0],
+            region_start_and_end: [
+                spec.region_start[0],
+                spec.region_start[1],
+                spec.region_end[0],
+                spec.region_end[1],
+            ],
+            tiles_info: [
+                spec.num_tiles[0],
+                spec.num_tiles[1],
+                spec.selected_tile[0],
+                spec.selected_tile[1],
+            ],
+        }
+    }
 }
 
 pub struct GizmoRenderPipeline {
@@ -71,6 +104,8 @@ pub struct GizmoRenderPipeline {
     square_vertex_buffer: Buffer,
     square_index_buffer: Buffer,
     texture_bind_group_layout: BindGroupLayout,
+    sprite_spec_bind_group: BindGroup,
+    sprite_spec_buffer: Buffer,
 }
 
 impl GizmoRenderPipeline {
@@ -148,6 +183,29 @@ impl GizmoRenderPipeline {
                 ],
             });
 
+        let sprite_spec_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Sprite Spec Buffer"),
+            //size: mem::size_of::<SpriteSpecPadded>() as u64, // Ensure alignment
+            size: mem::size_of::<SpriteSpecPadded>() as u64, // Ensure alignment
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let sprite_spec_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("Sprite Spec Bind Group Layout"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
+
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
@@ -155,6 +213,7 @@ impl GizmoRenderPipeline {
                     &transform_bind_group_layout,
                     &color_bind_group_layout,
                     &texture_bind_group_layout,
+                    &sprite_spec_bind_group_layout,
                 ],
                 push_constant_ranges: &[],
             });
@@ -173,7 +232,7 @@ impl GizmoRenderPipeline {
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: config.format,
-                    blend: Some(wgpu::BlendState::REPLACE),
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
@@ -223,6 +282,19 @@ impl GizmoRenderPipeline {
             }],
         });
 
+        let sprite_spec_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Sprite Spec Bind Group"),
+            layout: &sprite_spec_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &sprite_spec_buffer,
+                    offset: 0,
+                    size: None,
+                }),
+            }],
+        });
+
         let square_vertices = [
             Vertex {
                 position: [0.0, 0.0, 0.0],
@@ -260,6 +332,8 @@ impl GizmoRenderPipeline {
             square_vertex_buffer,
             square_index_buffer,
             texture_bind_group_layout,
+            sprite_spec_bind_group,
+            sprite_spec_buffer,
         }
     }
 
@@ -315,6 +389,16 @@ impl GizmoRenderPipeline {
         queue.write_buffer(&self.color_buffer, 0, bytemuck::cast_slice(&[color]));
     }
 
+    pub fn write_sprite_spec(&self, queue: &Queue, sprite_spec: SpriteSpec) {
+        queue.write_buffer(
+            &self.sprite_spec_buffer,
+            0,
+            //bytemuck::cast_slice(&[sprite_spec]),
+            // we need to pad it
+            bytemuck::cast_slice(&[SpriteSpecPadded::from(sprite_spec)]),
+        );
+    }
+
     pub fn bind_texture(&self, render_pass: &mut wgpu::RenderPass, texture: &GizmoBindableTexture) {
         render_pass.set_bind_group(2, &texture.bind_group, &[]);
     }
@@ -323,6 +407,7 @@ impl GizmoRenderPipeline {
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, &self.transform_bind_group, &[]);
         render_pass.set_bind_group(1, &self.color_bind_group, &[]);
+        render_pass.set_bind_group(3, &self.sprite_spec_bind_group, &[]);
     }
 
     pub fn with_quad_geometry<F: FnOnce(&Buffer, &Buffer, u32)>(&self, f: F) {
