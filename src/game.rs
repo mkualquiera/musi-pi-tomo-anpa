@@ -1,5 +1,6 @@
 use glam::{Vec2, Vec3};
 use log::info;
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use wgpu::Color;
 use winit::keyboard::KeyCode;
 
@@ -88,6 +89,8 @@ pub struct Game {
     objects: Vec<Vec2>,
     camera: OrthoCamera,
     player_texture: GizmoBindableTexture,
+    walk_audio: AudioHandle,
+    rng: StdRng,
 }
 
 impl Game {
@@ -109,15 +112,30 @@ impl Game {
             },
             player_texture: rendering_system
                 .gizmo_texture_from_encoded_image(include_bytes!("assets/char_template.png")),
+            walk_audio: audio_system.load_buffer(include_bytes!("assets/walk.wav")),
+            rng: StdRng::from_seed([0; 32]), // Seed with zeros for reproducibility
         }
     }
 
     pub fn update(&mut self, input: &InputSystem, audio_system: &mut AudioSystem, delta_time: f32) {
+        let frames = [0, 1, 2, 1];
+
+        let previous_frame = frames[self.player.walking_index as usize] as u32;
         self.player.update(input, delta_time);
+        let frame = frames[self.player.walking_index as usize] as u32;
+
+        if frame == 1 && previous_frame != 1 {
+            audio_system.play(&self.walk_audio, self.rng.random_range(0.8..1.2));
+        }
     }
 
     pub fn render(&self, drawer: &mut Drawer) {
-        drawer.clear_slow(Color::BLACK);
+        drawer.clear_slow(Color {
+            r: 0.2,
+            g: 1.0,
+            b: 0.2,
+            a: 1.0,
+        });
 
         let view_transform = self
             .camera
@@ -143,8 +161,29 @@ impl Game {
         }
 
         let frames = [0, 1, 2, 1];
+        let frame = frames[self.player.walking_index as usize] as u32;
 
         // draw player as a square
+        drawer.draw_square_slow(
+            Some(
+                &self
+                    .player
+                    .local_space(&view_transform)
+                    .translate(Vec3::new(2.0 - 0.25 + 0.25 / 2.0, 0.0, 0.0))
+                    .shear(-2.0, 0.0),
+            ),
+            Some(&EngineColor::BLACK),
+            GizmoSprite {
+                texture: &self.player_texture,
+                sprite_spec: SpriteSpec {
+                    use_texture: 1,
+                    region_start: [0.0, 0.0],
+                    region_end: [1.0, 1.0],
+                    num_tiles: [3, 4],
+                    selected_tile: [frame, self.player.direction as u32],
+                },
+            },
+        );
         drawer.draw_square_slow(
             Some(&self.player.local_space(&view_transform)),
             Some(&EngineColor::WHITE),
@@ -155,10 +194,7 @@ impl Game {
                     region_start: [0.0, 0.0],
                     region_end: [1.0, 1.0],
                     num_tiles: [3, 4],
-                    selected_tile: [
-                        frames[self.player.walking_index as usize] as u32,
-                        self.player.direction as u32,
-                    ],
+                    selected_tile: [frame, self.player.direction as u32],
                 },
             },
         );

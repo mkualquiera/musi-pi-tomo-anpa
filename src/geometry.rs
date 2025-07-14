@@ -44,6 +44,20 @@ impl Transform {
         }
     }
 
+    pub fn shear(&self, shear_x: f32, shear_y: f32) -> Self {
+        let shear_matrix = glam::Mat4::from_cols(
+            glam::Vec4::new(1.0, shear_y, 0.0, 0.0),
+            glam::Vec4::new(shear_x, 1.0, 0.0, 0.0),
+            glam::Vec4::new(0.0, 0.0, 1.0, 0.0),
+            glam::Vec4::new(0.0, 0.0, 0.0, 1.0),
+        );
+        let mat = self.matrix * shear_matrix;
+        Self {
+            matrix: mat,
+            raw: mat.to_cols_array_2d(),
+        }
+    }
+
     pub fn as_bytes(&self) -> &[u8] {
         bytemuck::cast_slice(&self.raw)
     }
