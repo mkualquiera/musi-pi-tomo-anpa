@@ -17,7 +17,7 @@ use winit::window::Window;
 use crate::{
     game::Game,
     geometry::Transform,
-    renderer::gizmo::{GizmoBindableTexture, GizmoRenderPipeline, GizmoSprite},
+    renderer::gizmo::{GizmoBindableTexture, GizmoRenderPipeline, GizmoSprite, GizmoSpriteSheet},
 };
 
 #[repr(C)]
@@ -262,6 +262,17 @@ impl RenderingSystem {
         let (width, height) = image.dimensions();
         let rgba = image.to_rgba8();
         self.create_gizmo_texture(width, height, rgba.as_raw().as_slice())
+    }
+
+    pub fn gizmo_sprite_sheet_from_encoded_image(
+        &mut self,
+        image_data: &[u8],
+        region_start: [f32; 2],
+        region_end: [f32; 2],
+        num_tiles: [u32; 2],
+    ) -> GizmoSpriteSheet {
+        let texture = self.gizmo_texture_from_encoded_image(image_data);
+        GizmoSpriteSheet::new(texture, region_start, region_end, num_tiles)
     }
 }
 

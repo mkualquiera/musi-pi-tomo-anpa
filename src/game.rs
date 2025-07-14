@@ -10,7 +10,7 @@ use crate::{
     geometry::Transform,
     ortographic_camera::OrthoCamera,
     renderer::{
-        gizmo::{GizmoBindableTexture, GizmoSprite, SpriteSpec},
+        gizmo::{GizmoBindableTexture, GizmoSprite, GizmoSpriteSheet, SpriteSpec},
         Drawer, EngineColor, RenderingSystem,
     },
     InputSystem,
@@ -88,7 +88,7 @@ pub struct Game {
     player: Player,
     objects: Vec<Vec2>,
     camera: OrthoCamera,
-    player_texture: GizmoBindableTexture,
+    player_texture: GizmoSpriteSheet,
     walk_audio: AudioHandle,
     rng: StdRng,
 }
@@ -107,15 +107,19 @@ impl Game {
             //    Vec2::new(7.0, 1.0),
             //    Vec2::new(-3.0, -2.0),
             //]),
-            objects: (0..400)
+            objects: (0..100)
                 .map(|_| Vec2::new(rng.random_range(-10.0..10.0), rng.random_range(-10.0..10.0)))
                 .collect(),
             camera: {
                 let (width, height) = Game::target_size();
                 OrthoCamera::new(width as f32, height as f32, 32.0)
             },
-            player_texture: rendering_system
-                .gizmo_texture_from_encoded_image(include_bytes!("assets/char_template.png")),
+            player_texture: rendering_system.gizmo_sprite_sheet_from_encoded_image(
+                include_bytes!("assets/char_template.png"),
+                [0.0, 0.0],
+                [1.0, 1.0],
+                [3, 4],
+            ),
             walk_audio: audio_system.load_buffer(include_bytes!("assets/walk.wav")),
             rng: StdRng::from_seed([0; 32]), // Seed with zeros for reproducibility
         }
@@ -154,16 +158,7 @@ impl Game {
                 drawer.draw_square_slow(
                     Some(&view_transform.translate(Vec3::new(object.x, object.y, 0.0))),
                     Some(&EngineColor::RED),
-                    GizmoSprite {
-                        texture: &self.player_texture,
-                        sprite_spec: SpriteSpec {
-                            use_texture: 1,
-                            region_start: [0.0, 0.0],
-                            region_end: [1.0, 1.0],
-                            num_tiles: [3, 4],
-                            selected_tile: [1, 0],
-                        },
-                    },
+                    self.player_texture.get_sprite([1, 0]).unwrap(),
                 );
             }
         }
@@ -181,30 +176,16 @@ impl Game {
                     .shear(-2.0, 0.0),
             ),
             Some(&EngineColor::BLACK),
-            GizmoSprite {
-                texture: &self.player_texture,
-                sprite_spec: SpriteSpec {
-                    use_texture: 1,
-                    region_start: [0.0, 0.0],
-                    region_end: [1.0, 1.0],
-                    num_tiles: [3, 4],
-                    selected_tile: [frame, self.player.direction as u32],
-                },
-            },
+            self.player_texture
+                .get_sprite([frame, self.player.direction as u32])
+                .unwrap(),
         );
         drawer.draw_square_slow(
             Some(&self.player.local_space(&view_transform)),
             Some(&EngineColor::WHITE),
-            GizmoSprite {
-                texture: &self.player_texture,
-                sprite_spec: SpriteSpec {
-                    use_texture: 1,
-                    region_start: [0.0, 0.0],
-                    region_end: [1.0, 1.0],
-                    num_tiles: [3, 4],
-                    selected_tile: [frame, self.player.direction as u32],
-                },
-            },
+            self.player_texture
+                .get_sprite([frame, self.player.direction as u32])
+                .unwrap(),
         );
     }
 }

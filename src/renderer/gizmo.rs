@@ -94,6 +94,45 @@ impl From<SpriteSpec> for SpriteSpecPadded {
     }
 }
 
+pub struct GizmoSpriteSheet {
+    texture: GizmoBindableTexture,
+    region_start: [f32; 2],
+    region_end: [f32; 2],
+    num_tiles: [u32; 2],
+}
+
+impl GizmoSpriteSheet {
+    pub fn new(
+        texture: GizmoBindableTexture,
+        region_start: [f32; 2],
+        region_end: [f32; 2],
+        num_tiles: [u32; 2],
+    ) -> Self {
+        Self {
+            texture,
+            region_start,
+            region_end,
+            num_tiles,
+        }
+    }
+
+    pub fn get_sprite(&self, selected_tile: [u32; 2]) -> Option<GizmoSprite> {
+        if selected_tile[0] >= self.num_tiles[0] || selected_tile[1] >= self.num_tiles[1] {
+            return None; // Invalid tile selection
+        }
+        Some(GizmoSprite {
+            texture: &self.texture,
+            sprite_spec: SpriteSpec {
+                use_texture: 1,
+                region_start: self.region_start,
+                region_end: self.region_end,
+                num_tiles: self.num_tiles,
+                selected_tile,
+            },
+        })
+    }
+}
+
 pub struct GizmoRenderPipeline {
     pipeline: RenderPipeline,
     transform_buffer: Buffer,
