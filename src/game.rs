@@ -102,11 +102,6 @@ impl Game {
         let mut rng = StdRng::from_seed([0; 32]); // Seed with zeros for reproducibility
         Self {
             player: Player::new(Vec2::new(0.0, 0.0)),
-            //objects: Vec::from([
-            //    Vec2::new(9.0, 4.0),
-            //    Vec2::new(7.0, 1.0),
-            //    Vec2::new(-3.0, -2.0),
-            //]),
             objects: (0..100)
                 .map(|_| Vec2::new(rng.random_range(-10.0..10.0), rng.random_range(-10.0..10.0)))
                 .collect(),
