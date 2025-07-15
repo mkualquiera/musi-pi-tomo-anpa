@@ -122,7 +122,7 @@ impl Player {
                 self.walking_index = (self.walking_index + 1) % 4;
             }
         } else {
-            self.walking_counter = 0.0;
+            self.walking_counter = 0.20;
             self.walking_index = 1;
             self.direction = 0; // reset direction to down when idle
         }
