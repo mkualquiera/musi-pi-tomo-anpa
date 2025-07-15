@@ -80,6 +80,8 @@ pub struct RenderingSystem {
     ortographic_transform: Transform,
 
     gizmo_pipeline: GizmoRenderPipeline,
+
+    alignment_hint: u32,
 }
 
 pub struct Drawer<'a> {
@@ -91,7 +93,7 @@ pub struct Drawer<'a> {
 }
 
 impl RenderingSystem {
-    pub async fn new(window: Arc<Window>, width: u32, height: u32) -> Self {
+    pub async fn new(window: Arc<Window>, width: u32, height: u32, alignment_hint: u32) -> Self {
         let target_aspect_ratio = width as f32 / height as f32;
         let size = winit::dpi::PhysicalSize::new(width, height);
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
@@ -162,6 +164,7 @@ impl RenderingSystem {
             ortographic_transform,
             target_aspect_ratio,
             gizmo_pipeline,
+            alignment_hint,
         }
     }
 
@@ -179,6 +182,10 @@ impl RenderingSystem {
                     new_size.height,
                 )
             };
+            let (width, height) = (
+                width / self.alignment_hint * self.alignment_hint,
+                height / self.alignment_hint * self.alignment_hint,
+            );
             self.size = winit::dpi::PhysicalSize::new(width, height);
             self.config.width = width;
             self.config.height = height;

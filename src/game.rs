@@ -16,6 +16,55 @@ use crate::{
     InputSystem,
 };
 
+struct GameLevelSpec {
+    pub background: GizmoSpriteSheet,
+    pub decoration: GizmoSpriteSheet,
+    collision: Vec<Transform>,
+    num_tiles: (usize, usize),
+    tile_size: f32,
+}
+
+struct GameLevelLoadData<'a> {
+    background_bytes: &'static [u8],
+    decoration_bytes: &'static [u8],
+    collision_csv_bytes: &'a [u8],
+    data_json_bytes: &'a [u8],
+}
+
+impl GameLevelSpec {
+    pub fn load(
+        load_data: GameLevelLoadData,
+        rendering_system: &mut RenderingSystem,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let background = rendering_system.gizmo_sprite_sheet_from_encoded_image(
+            load_data.background_bytes,
+            [0.0, 0.0],
+            [1.0, 1.0],
+            [1, 1],
+        );
+
+        let decoration = rendering_system.gizmo_sprite_sheet_from_encoded_image(
+            load_data.decoration_bytes,
+            [0.0, 0.0],
+            [1.0, 1.0],
+            [1, 1],
+        );
+
+        Ok(Self {
+            background,
+            decoration,
+            collision: Vec::new(),
+            num_tiles: (16, 16),
+            tile_size: 32.0,
+        })
+    }
+
+    pub fn get_local_space(&self, base_transform: &Transform) -> Transform {
+        let (width, height) = self.num_tiles;
+        base_transform.scale(Vec3::new(width as f32, height as f32, 1.0))
+    }
+}
+
 pub struct Player {
     pub position: Vec2,
     pub walking_index: u8,
@@ -91,6 +140,8 @@ pub struct Game {
     player_texture: GizmoSpriteSheet,
     walk_audio: AudioHandle,
     rng: StdRng,
+
+    test_level: GameLevelSpec,
 }
 
 impl Game {
@@ -98,11 +149,15 @@ impl Game {
         (320, 240)
     }
 
+    pub fn alignment_hint() -> u32 {
+        32
+    }
+
     pub fn init(rendering_system: &mut RenderingSystem, audio_system: &mut AudioSystem) -> Self {
         let mut rng = StdRng::from_seed([0; 32]); // Seed with zeros for reproducibility
         Self {
             player: Player::new(Vec2::new(0.0, 0.0)),
-            objects: (0..100)
+            objects: (0..20)
                 .map(|_| Vec2::new(rng.random_range(-10.0..10.0), rng.random_range(-10.0..10.0)))
                 .collect(),
             camera: {
@@ -117,6 +172,20 @@ impl Game {
             ),
             walk_audio: audio_system.load_buffer(include_bytes!("assets/walk.wav")),
             rng: StdRng::from_seed([0; 32]), // Seed with zeros for reproducibility
+            test_level: GameLevelSpec::load(
+                GameLevelLoadData {
+                    background_bytes: include_bytes!("assets/level/simplified/Level_0/_bg.png"),
+                    decoration_bytes: include_bytes!(
+                        "assets/level/simplified/Level_0/AutoLayer.png"
+                    ),
+                    collision_csv_bytes: include_bytes!(
+                        "assets/level/simplified/Level_0/Collision.csv"
+                    ),
+                    data_json_bytes: include_bytes!("assets/level/simplified/Level_0/data.json"),
+                },
+                rendering_system,
+            )
+            .expect("Failed to load game level"),
         }
     }
 
@@ -134,10 +203,10 @@ impl Game {
 
     pub fn render(&self, drawer: &mut Drawer) {
         drawer.clear_slow(Color {
-            r: 0.2,
-            g: 1.0,
-            b: 0.2,
-            a: 1.0,
+            r: 0.001,
+            g: 0.001,
+            b: 0.001,
+            a: 255.0,
         });
 
         let view_transform = self.camera.get_transform().set_origin(
@@ -147,34 +216,33 @@ impl Game {
                 .translate(Vec3::new(0.5, 0.5, 0.0)),
         );
 
+        // Draw level
+        let level_transform = self.test_level.get_local_space(&view_transform);
+        drawer.draw_square_slow(
+            Some(&level_transform),
+            Some(&EngineColor::WHITE),
+            self.test_level.background.get_sprite([0, 0]).unwrap(),
+        );
+        drawer.draw_square_slow(
+            Some(&level_transform),
+            Some(&EngineColor::WHITE),
+            self.test_level.decoration.get_sprite([0, 0]).unwrap(),
+        );
+
         // Draw objects
-        for i in 0..1 {
-            for object in &self.objects {
-                drawer.draw_square_slow(
-                    Some(&view_transform.translate(Vec3::new(object.x, object.y, 0.0))),
-                    Some(&EngineColor::RED),
-                    self.player_texture.get_sprite([1, 0]).unwrap(),
-                );
-            }
-        }
+        //for i in 0..1 {
+        //    for object in &self.objects {
+        //        drawer.draw_square_slow(
+        //            Some(&view_transform.translate(Vec3::new(object.x, object.y, 0.0))),
+        //            Some(&EngineColor::RED),
+        //            self.player_texture.get_sprite([1, 0]).unwrap(),
+        //        );
+        //    }
+        //}
 
         let frames = [0, 1, 2, 1];
         let frame = frames[self.player.walking_index as usize] as u32;
 
-        // draw player as a square
-        drawer.draw_square_slow(
-            Some(
-                &self
-                    .player
-                    .local_space(&view_transform)
-                    .translate(Vec3::new(2.0 - 0.25 + 0.25 / 2.0, 0.0, 0.0))
-                    .shear(-2.0, 0.0),
-            ),
-            Some(&EngineColor::BLACK),
-            self.player_texture
-                .get_sprite([frame, self.player.direction as u32])
-                .unwrap(),
-        );
         drawer.draw_square_slow(
             Some(&self.player.local_space(&view_transform)),
             Some(&EngineColor::WHITE),

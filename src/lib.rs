@@ -188,6 +188,7 @@ impl ApplicationHandler for WebApp {
         status_div.set_text_content(Some("Loaded!"));
 
         let (target_w, target_h) = Game::target_size();
+        let alignment_hint = Game::alignment_hint();
 
         //canvas.set_width(target_w);
         //canvas.set_height(target_h);
@@ -208,7 +209,8 @@ impl ApplicationHandler for WebApp {
             let game_clone = Arc::clone(game);
             let audio_clone = Arc::clone(audio);
             wasm_bindgen_futures::spawn_local(async move {
-                let mut renderer = RenderingSystem::new(window.clone(), target_w, target_h).await;
+                let mut renderer =
+                    RenderingSystem::new(window.clone(), target_w, target_h, alignment_hint).await;
                 let mut audio_system = AudioSystem::new();
                 let game = Game::init(&mut renderer, &mut audio_system);
 
