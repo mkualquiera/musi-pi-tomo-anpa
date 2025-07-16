@@ -58,6 +58,25 @@ fn main() {
         .render(&tile_sheet)
         .expect("Failed to render front walls layer");
 
+    // Ambient occlusion
+    let ao_locations = ceiling_locations.convolve(|neighborhood| {
+        let top_value = neighborhood.get(0, -1).unwrap_or(1);
+        if top_value == 1 {
+            0
+        } else {
+            1
+        }
+    });
+    let ao_autotile_sheet = tile_sheet.canonical_autotile((1, 0), (0, 2));
+    let ao_autotile_layer = ao_locations.autotile_with(1, AbyssPolicy::PadWithSelf);
+
+    // We want the ao to be hidden by the ceiling, so we can replace the ceiling layer
+    let ao_image = ao_autotile_layer
+        .render(&ao_autotile_sheet)
+        .expect("Failed to render AO layer");
+
+    let ceiling_image = alpha_blend_new(&ceiling_image, &ao_image, 0, 0);
+
     // Merge the images
     let level_image = alpha_blend_new(&front_walls_image, &ceiling_image, 0, 0);
 

@@ -8,11 +8,11 @@ use ndarray::Array2;
 use crate::level::adjacency::match_adjacency_rule;
 
 pub fn alpha_blend_new(base: &RgbaImage, overlay: &RgbaImage, x: u32, y: u32) -> RgbaImage {
-    let (base_width, base_height) = base.dimensions();
-    let (overlay_width, overlay_height) = overlay.dimensions();
+    let (base_width, base_height) = overlay.dimensions();
+    let (overlay_width, overlay_height) = base.dimensions();
 
     // Create new image with same dimensions as base
-    let mut result = base.clone();
+    let mut result = overlay.clone();
 
     for dy in 0..overlay_height {
         for dx in 0..overlay_width {
@@ -24,7 +24,7 @@ pub fn alpha_blend_new(base: &RgbaImage, overlay: &RgbaImage, x: u32, y: u32) ->
                 continue;
             }
 
-            let overlay_pixel = overlay.get_pixel(dx, dy);
+            let overlay_pixel = base.get_pixel(dx, dy);
             let base_pixel = result.get_pixel_mut(base_x, base_y);
 
             // Alpha blending formula: result = src * src_alpha + dst * (1 - src_alpha)
