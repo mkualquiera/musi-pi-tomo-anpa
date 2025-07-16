@@ -1,11 +1,20 @@
 mod adjacency;
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::RangeInclusive,
+};
 
 use image::{GenericImage, GenericImageView, RgbImage, RgbaImage};
 use ndarray::Array2;
 
 use crate::level::adjacency::match_adjacency_rule;
+
+macro_rules! build_log {
+    ($($arg:tt)*) => {
+        println!("cargo:warning=[BUILD] {}", format!($($arg)*));
+    };
+}
 
 pub fn alpha_blend_new(base: &RgbaImage, overlay: &RgbaImage, x: u32, y: u32) -> RgbaImage {
     let (base_width, base_height) = overlay.dimensions();
@@ -148,6 +157,10 @@ impl TileSheet {
         }
     }
 
+    pub fn count_registered_tiles(&self) -> usize {
+        self.tile_mapping.len()
+    }
+
     pub fn new_with_tile_size(image: RgbaImage, tile_size: (u32, u32)) -> Self {
         let num_tiles = (
             image.width() as usize / tile_size.0 as usize,
@@ -237,6 +250,21 @@ impl TileSheet {
             }
         }
         autotile
+    }
+
+    pub fn contiguous_tiles(
+        &self,
+        range_x: &RangeInclusive<u32>,
+        range_y: &RangeInclusive<u32>,
+    ) -> Self {
+        let mut contiguous = self.clean_clone();
+        for x in range_x.clone() {
+            for y in range_y.clone() {
+                let value = contiguous.allocate_tile_id((x as usize, y as usize));
+                build_log!("Allocated tile ID {} for position ({}, {})", value, x, y);
+            }
+        }
+        contiguous
     }
 }
 
@@ -389,6 +417,22 @@ impl LevelLayer {
             AbyssPolicy::PadWithSelf => true,
             AbyssPolicy::PadWithAir => false,
         })
+    }
+
+    pub fn ones_like(&self) -> LevelLayer {
+        let mut new_layer = LevelLayer::new(self.data.ncols(), self.data.nrows());
+        new_layer.data.fill(1);
+        new_layer
+    }
+
+    pub fn fill_with<F: Fn(usize, usize) -> u32>(&self, func: F) -> LevelLayer {
+        let mut new_layer = LevelLayer::new(self.data.ncols(), self.data.nrows());
+        for x in 0..self.data.ncols() {
+            for y in 0..self.data.nrows() {
+                new_layer.data[[y, x]] = func(x, y);
+            }
+        }
+        new_layer
     }
 }
 

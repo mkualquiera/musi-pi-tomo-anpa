@@ -1,11 +1,5 @@
 pub mod level;
 
-macro_rules! build_log {
-    ($($arg:tt)*) => {
-        println!("cargo:warning=[BUILD] {}", format!($($arg)*));
-    };
-}
-
 pub fn add(left: u64, right: u64) -> u64 {
     left + right
 }

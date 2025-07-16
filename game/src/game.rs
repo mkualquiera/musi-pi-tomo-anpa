@@ -174,10 +174,8 @@ impl Game {
             rng: StdRng::from_seed([0; 32]), // Seed with zeros for reproducibility
             test_level: GameLevelSpec::load(
                 GameLevelLoadData {
-                    background_bytes: include_bytes!("assets/level/simplified/Level_0/_bg.png"),
-                    decoration_bytes: include_bytes!(
-                        "assets/level/simplified/Level_0/AutoLayer.png"
-                    ),
+                    background_bytes: include_bytes!("assets/level_generated/floor.png"),
+                    decoration_bytes: include_bytes!("assets/level_generated/test_with_walls.png"),
                     collision_csv_bytes: include_bytes!(
                         "assets/level/simplified/Level_0/Collision.csv"
                     ),

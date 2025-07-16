@@ -1,4 +1,7 @@
+use std::hash::{DefaultHasher, Hash, Hasher};
+
 use game_build_tools::level::{alpha_blend_new, AbyssPolicy, LevelSpec};
+use rand::{rngs::StdRng, Rng, SeedableRng};
 
 fn main() {
     println!("cargo:rerun-if-changed=src/assets/level_specs");
@@ -83,4 +86,23 @@ fn main() {
     level_image
         .save("src/assets/level_generated/test_with_walls.png")
         .expect("Failed to save level image with walls");
+
+    let floor_tiles = tile_sheet.contiguous_tiles(&(0..=0), &(3..=6));
+
+    let floor_layer = level_layer.ones_like().fill_with(|x, y| {
+        let mut hasher = DefaultHasher::new();
+        (x, y).hash(&mut hasher);
+        let hash = hasher.finish();
+        let mut rng = StdRng::seed_from_u64(hash);
+        let tile_id = rng.random_range(1..(floor_tiles.count_registered_tiles() - 1));
+        tile_id as u32
+    });
+
+    let floor_image = floor_layer
+        .render(&floor_tiles)
+        .expect("Failed to render floor layer");
+
+    floor_image
+        .save("src/assets/level_generated/floor.png")
+        .expect("Failed to save floor image");
 }
