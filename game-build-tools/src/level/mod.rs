@@ -2,6 +2,7 @@ mod adjacency;
 
 use std::{
     collections::{HashMap, HashSet},
+    error::Error,
     ops::RangeInclusive,
 };
 
@@ -433,6 +434,20 @@ impl LevelLayer {
             }
         }
         new_layer
+    }
+
+    pub fn dump_csv(&self, path: &str) -> Result<(), Box<dyn Error>> {
+        let mut csv_data = String::new();
+        for (i, row) in self.data.outer_iter().enumerate() {
+            let row_str: Vec<String> = row.iter().map(|&tile_id| tile_id.to_string()).collect();
+            csv_data.push_str(&row_str.join(","));
+            //csv_data.push('\n');
+            if i < self.data.nrows() - 1 {
+                csv_data.push('\n');
+            }
+        }
+        std::fs::write(path, csv_data)?;
+        Ok(())
     }
 }
 

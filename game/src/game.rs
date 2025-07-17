@@ -196,15 +196,12 @@ impl Player {
 
 pub struct Game {
     player: Player,
-    objects: Vec<Vec2>,
     camera: OrthoCamera,
     player_texture: GizmoSpriteSheet,
     walk_audio: AudioHandle,
     rng: StdRng,
 
     test_level: GameLevelSpec,
-
-    player_is_colliding: bool,
 }
 
 impl Game {
@@ -220,9 +217,6 @@ impl Game {
         let mut rng = StdRng::from_seed([0; 32]); // Seed with zeros for reproducibility
         Self {
             player: Player::new(Vec2::new(1.0, 1.0)),
-            objects: (0..20)
-                .map(|_| Vec2::new(rng.random_range(-10.0..10.0), rng.random_range(-10.0..10.0)))
-                .collect(),
             camera: {
                 let (width, height) = Game::target_size();
                 OrthoCamera::new(width as f32, height as f32, 32.0)
@@ -244,7 +238,6 @@ impl Game {
                 rendering_system,
             )
             .expect("Failed to load game level"),
-            player_is_colliding: false,
         }
     }
 
@@ -255,10 +248,6 @@ impl Game {
 
         let level_origin =
             Transform::new().set_origin(&Transform::new().translate(Vec3::new(8.0, 8.0, 0.0)));
-        self.player_is_colliding = self
-            .test_level
-            .collides_with(&level_origin, &self.player.local_space(&Transform::new()))
-            .is_some();
 
         self.player.update(input, delta_time, |player_space| {
             self.test_level.collides_with(&level_origin, player_space)
@@ -300,46 +289,15 @@ impl Game {
             self.test_level.decoration.get_sprite([0, 0]).unwrap(),
         );
 
-        // Visualize collisions
-        //self.test_level.visualize_collisions(
-        //    &view_transform.set_origin(&Transform::new().translate(Vec3::new(0.0, 0.0, 0.0))),
-        //    drawer,
-        //    self.player_texture.get_sprite([0, 0]).unwrap(),
-        //);
-
-        // Draw objects
-        //for i in 0..1 {
-        //    for object in &self.objects {
-        //        drawer.draw_square_slow(
-        //            Some(&view_transform.translate(Vec3::new(object.x, object.y, 0.0))),
-        //            Some(&EngineColor::RED),
-        //            self.player_texture.get_sprite([1, 0]).unwrap(),
-        //        );
-        //    }
-        //}
-
         let frames = [0, 1, 2, 1];
         let frame = frames[self.player.walking_index as usize] as u32;
 
-        let color = if self.player_is_colliding {
-            EngineColor::GREEN
-        } else {
-            EngineColor::WHITE
-        };
-
         drawer.draw_square_slow(
             Some(&self.player.local_space(&view_transform)),
-            Some(&color),
+            Some(&EngineColor::WHITE),
             self.player_texture
                 .get_sprite([frame, self.player.direction as u32])
                 .unwrap(),
         );
-
-        // Draw player collider
-        //drawer.draw_square_slow(
-        //    Some(&self.player.collider(&view_transform)),
-        //    Some(&EngineColor::BLUE),
-        //    self.player_texture.get_sprite([0, 0]).unwrap(),
-        //);
     }
 }
