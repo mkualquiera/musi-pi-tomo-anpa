@@ -151,8 +151,8 @@ impl MovementController {
             position,
             walking_index: 0,
             walking_counter: 0.0,
-            direction: 0,                   // 0: down, 1: left, 2: up, 3: right
-            movement_speed: movement_speed, // Default speed
+            direction: 0,   // 0: down, 1: left, 2: up, 3: right
+            movement_speed, // Default speed
         }
     }
 
@@ -235,18 +235,21 @@ impl MovementController {
     }
 }
 
+enum EnemyAIState {
+    Idle,
+    Chasing(Vec2),
+}
+
 struct Enemy {
     controller: MovementController,
-    can_see_player: bool,
-    last_seen_position: Vec2,
+    state: EnemyAIState,
 }
 
 impl Enemy {
     pub fn new(position: Vec2) -> Self {
         Self {
             controller: MovementController::new(position, 2.0),
-            can_see_player: false,
-            last_seen_position: position,
+            state: EnemyAIState::Idle,
         }
     }
 
@@ -257,16 +260,39 @@ impl Enemy {
         player: &MovementController,
         level: &GameLevelSpec,
     ) {
-        self.can_see_player = !GameLevelSpec::line_collides_with_level(
-            self.controller.feet_position(),
-            player.feet_position(),
-            level,
-            &Transform::new().set_origin(&Transform::new().translate(Vec3::new(8.0, 8.0, 0.0))),
-        );
-        if self.can_see_player {
-            self.last_seen_position = player.feet_position().floor() + 0.5;
-            // Only if the player position is close enough to the center of the tile
-        }
+        let distance_to_player = self
+            .controller
+            .feet_position()
+            .distance(player.feet_position());
+
+        match self.state {
+            EnemyAIState::Idle => {
+                if distance_to_player < 6.0 {
+                    let can_see = !GameLevelSpec::line_collides_with_level(
+                        self.controller.feet_position(),
+                        player.feet_position().floor() + 0.5,
+                        level,
+                        &Transform::new()
+                            .set_origin(&Transform::new().translate(Vec3::new(8.0, 8.0, 0.0))),
+                    );
+                    if can_see {
+                        self.state = EnemyAIState::Chasing(player.feet_position().floor() + 0.5);
+                    }
+                }
+            }
+            EnemyAIState::Chasing(target_position) => {
+                let can_see = !GameLevelSpec::line_collides_with_level(
+                    self.controller.feet_position(),
+                    player.feet_position().floor() + 0.5,
+                    level,
+                    &Transform::new()
+                        .set_origin(&Transform::new().translate(Vec3::new(8.0, 8.0, 0.0))),
+                );
+                if can_see {
+                    self.state = EnemyAIState::Chasing(player.feet_position().floor() + 0.5);
+                }
+            }
+        };
 
         let mut intention = MovementIntention {
             up: false,
@@ -275,15 +301,22 @@ impl Enemy {
             right: false,
         };
 
-        if self.last_seen_position.y < self.controller.feet_position().y - 0.02 {
-            intention.up = true;
-        } else if self.last_seen_position.y > self.controller.feet_position().y + 0.02 {
-            intention.down = true;
-        }
-        if self.last_seen_position.x < self.controller.feet_position().x - 0.02 {
-            intention.left = true;
-        } else if self.last_seen_position.x > self.controller.feet_position().x + 0.02 {
-            intention.right = true;
+        match self.state {
+            EnemyAIState::Chasing(target_position) => {
+                if target_position.y < self.controller.feet_position().y - 0.02 {
+                    intention.up = true;
+                } else if target_position.y > self.controller.feet_position().y + 0.02 {
+                    intention.down = true;
+                }
+                if target_position.x < self.controller.feet_position().x - 0.02 {
+                    intention.left = true;
+                } else if target_position.x > self.controller.feet_position().x + 0.02 {
+                    intention.right = true;
+                }
+            }
+            _ => {
+                // Stay idle, no action needed
+            }
         }
 
         let last_position = self.controller.position;
@@ -291,9 +324,16 @@ impl Enemy {
         self.controller
             .update(&intention, delta_time, check_collision);
 
-        if last_position == self.controller.position {
-            self.last_seen_position = self.controller.feet_position();
-        }
+        match self.state {
+            EnemyAIState::Chasing(_) => {
+                if last_position == self.controller.position {
+                    self.state = EnemyAIState::Idle; // If we didn't move, go back to idle
+                }
+            }
+            _ => {
+                // Stay idle, no action needed
+            }
+        };
     }
 }
 
@@ -418,7 +458,7 @@ impl Game {
 
         let frame = frames[self.enemy.controller.walking_index as usize] as u32;
 
-        let color = if self.enemy.can_see_player {
+        let color = if let EnemyAIState::Chasing(_) = self.enemy.state {
             EngineColor::RED
         } else {
             EngineColor::BLUE
