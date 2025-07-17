@@ -87,7 +87,7 @@ impl GameLevelSpec {
         None
     }
 
-    pub fn visualize_collisions(
+    pub fn _visualize_collisions(
         &self,
         origin: &Transform,
         drawer: &mut Drawer,

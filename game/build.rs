@@ -68,7 +68,9 @@ fn main() {
 
     // Ambient occlusion
     let ao_locations = ceiling_locations.convolve(|neighborhood| {
-        let top_value = neighborhood.get(0, -1).unwrap_or(1);
+        let top_value = neighborhood
+            .get(0, -1)
+            .unwrap_or(neighborhood.get(0, 0).unwrap());
         if top_value == 1 {
             0
         } else {
