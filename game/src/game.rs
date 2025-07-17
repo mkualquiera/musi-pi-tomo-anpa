@@ -121,9 +121,6 @@ impl GameLevelSpec {
 
 pub struct MovementController {
     pub position: Vec2,
-    pub walking_index: u8,
-    pub walking_counter: f32,
-    pub direction: u8,
     pub movement_speed: f32, // Default speed
 }
 
@@ -149,9 +146,6 @@ impl MovementController {
     pub fn new(position: Vec2, movement_speed: f32) -> Self {
         Self {
             position,
-            walking_index: 0,
-            walking_counter: 0.0,
-            direction: 0,   // 0: down, 1: left, 2: up, 3: right
             movement_speed, // Default speed
         }
     }
@@ -183,20 +177,6 @@ impl MovementController {
         if movement_vector.length() > 0.0 {
             movement_vector = movement_vector.normalize();
             movement_vector *= speed;
-            if movement_vector.x < 0.0 {
-                self.direction = 3; // left
-            } else if movement_vector.x > 0.0 {
-                self.direction = 1; // right
-            } else if movement_vector.y < 0.0 {
-                self.direction = 2; // up
-            } else if movement_vector.y > 0.0 {
-                self.direction = 0; // down
-            }
-            self.walking_counter += delta_time;
-            if self.walking_counter > 0.15 {
-                self.walking_counter = 0.0;
-                self.walking_index = (self.walking_index + 1) % 4;
-            }
 
             //self.position += player_direction;
             let previous_x = self.position.x;
@@ -209,10 +189,6 @@ impl MovementController {
             if check_collision(&self.collider(&Transform::new())).is_some() {
                 self.position.y = previous_y; // revert y movement if collision
             }
-        } else {
-            self.walking_counter = 0.20;
-            self.walking_index = 1;
-            self.direction = 0; // reset direction to down when idle
         }
     }
 
@@ -235,21 +211,86 @@ impl MovementController {
     }
 }
 
+#[derive(Clone, Copy)]
+enum CharacterOrientation {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+struct CharacterWalkAnimation {
+    sheet: GizmoSpriteSheet,
+    orientation: CharacterOrientation,
+    current_frame: usize,
+    frame_duration: f32,
+    elapsed_time: f32,
+}
+
+impl CharacterWalkAnimation {
+    pub fn new(sheet: GizmoSpriteSheet, orientation: CharacterOrientation) -> Self {
+        Self {
+            sheet,
+            orientation,
+            current_frame: 0,
+            frame_duration: 0.2, // Duration for each frame
+            elapsed_time: 0.0,
+        }
+    }
+
+    pub fn update(&mut self, delta_time: f32, orientation: Option<CharacterOrientation>) {
+        match orientation {
+            Some(new_orientation) => {
+                self.orientation = new_orientation;
+                self.elapsed_time += delta_time;
+                if self.elapsed_time >= self.frame_duration {
+                    self.current_frame = (self.current_frame + 1) % 4; // Cycle through 4 frames
+                    self.elapsed_time = 0.0;
+                }
+            }
+            None => {
+                self.current_frame = 0;
+                self.elapsed_time = 0.0;
+            }
+        }
+    }
+
+    pub fn get_current_sprite(&self) -> GizmoSprite {
+        let walk_cycle = [1, 2, 1, 0];
+        let offset = walk_cycle[self.current_frame];
+        let sprite_index = match self.orientation {
+            CharacterOrientation::Up => [offset, 2],
+            CharacterOrientation::Down => [offset, 0],
+            CharacterOrientation::Left => [offset, 3],
+            CharacterOrientation::Right => [offset, 1],
+        };
+        self.sheet
+            .get_sprite(sprite_index)
+            .expect("Sprite not found")
+    }
+}
+
 enum EnemyAIState {
     Idle,
     Chasing(Vec2),
+    Wandering(CharacterOrientation),
 }
 
 struct Enemy {
     controller: MovementController,
     state: EnemyAIState,
+    animation: CharacterWalkAnimation,
 }
 
 impl Enemy {
-    pub fn new(position: Vec2) -> Self {
+    pub fn new(position: Vec2, walking_sprite_sheet: GizmoSpriteSheet) -> Self {
         Self {
             controller: MovementController::new(position, 2.0),
             state: EnemyAIState::Idle,
+            animation: CharacterWalkAnimation::new(
+                walking_sprite_sheet,
+                CharacterOrientation::Down,
+            ),
         }
     }
 
@@ -259,6 +300,7 @@ impl Enemy {
         check_collision: CollidesWithWorld,
         player: &MovementController,
         level: &GameLevelSpec,
+        rng: &mut StdRng,
     ) {
         let distance_to_player = self
             .controller
@@ -266,8 +308,8 @@ impl Enemy {
             .distance(player.feet_position());
 
         match self.state {
-            EnemyAIState::Idle => {
-                if distance_to_player < 6.0 {
+            EnemyAIState::Idle | EnemyAIState::Wandering(_) => {
+                if distance_to_player < 3.0 {
                     let can_see = !GameLevelSpec::line_collides_with_level(
                         self.controller.feet_position(),
                         player.feet_position().floor() + 0.5,
@@ -278,6 +320,16 @@ impl Enemy {
                     if can_see {
                         self.state = EnemyAIState::Chasing(player.feet_position().floor() + 0.5);
                     }
+                } else if rng.random_bool(1.0 * delta_time as f64) {
+                    // Randomly decide to wander
+                    let direction = rng.random_range(0..4);
+                    let orientation = match direction {
+                        0 => CharacterOrientation::Up,
+                        1 => CharacterOrientation::Down,
+                        2 => CharacterOrientation::Left,
+                        _ => CharacterOrientation::Right,
+                    };
+                    self.state = EnemyAIState::Wandering(orientation);
                 }
             }
             EnemyAIState::Chasing(target_position) => {
@@ -292,6 +344,7 @@ impl Enemy {
                     self.state = EnemyAIState::Chasing(player.feet_position().floor() + 0.5);
                 }
             }
+            _ => {}
         };
 
         let mut intention = MovementIntention {
@@ -300,6 +353,8 @@ impl Enemy {
             left: false,
             right: false,
         };
+
+        let mut desired_orientation = None;
 
         match self.state {
             EnemyAIState::Chasing(target_position) => {
@@ -313,11 +368,36 @@ impl Enemy {
                 } else if target_position.x > self.controller.feet_position().x + 0.02 {
                     intention.right = true;
                 }
+
+                let delta_x = target_position.x - self.controller.feet_position().x;
+                let delta_y = target_position.y - self.controller.feet_position().y;
+                if delta_x.abs() > delta_y.abs() {
+                    if delta_x < 0.0 {
+                        desired_orientation = Some(CharacterOrientation::Left);
+                    } else {
+                        desired_orientation = Some(CharacterOrientation::Right);
+                    }
+                } else if delta_y < 0.0 {
+                    desired_orientation = Some(CharacterOrientation::Up);
+                } else {
+                    desired_orientation = Some(CharacterOrientation::Down);
+                }
+            }
+            EnemyAIState::Wandering(orientation) => {
+                match orientation {
+                    CharacterOrientation::Up => intention.up = true,
+                    CharacterOrientation::Down => intention.down = true,
+                    CharacterOrientation::Left => intention.left = true,
+                    CharacterOrientation::Right => intention.right = true,
+                }
+                desired_orientation = Some(orientation);
             }
             _ => {
                 // Stay idle, no action needed
             }
         }
+
+        self.animation.update(delta_time, desired_orientation);
 
         let last_position = self.controller.position;
 
@@ -325,7 +405,7 @@ impl Enemy {
             .update(&intention, delta_time, check_collision);
 
         match self.state {
-            EnemyAIState::Chasing(_) => {
+            EnemyAIState::Chasing(_) | EnemyAIState::Wandering(_) => {
                 if last_position == self.controller.position {
                     self.state = EnemyAIState::Idle; // If we didn't move, go back to idle
                 }
@@ -384,14 +464,22 @@ impl Game {
             )
             .expect("Failed to load game level"),
 
-            enemy: Enemy::new(Vec2::new(2.0, -2.0)),
+            enemy: Enemy::new(
+                Vec2::new(2.0, -2.0),
+                rendering_system.gizmo_sprite_sheet_from_encoded_image(
+                    include_bytes!("assets/char_template.png"),
+                    [0.0, 0.0],
+                    [1.0, 1.0],
+                    [3, 4],
+                ),
+            ),
         }
     }
 
     pub fn update(&mut self, input: &InputSystem, audio_system: &mut AudioSystem, delta_time: f32) {
         let frames = [0, 1, 2, 1];
 
-        let previous_frame = frames[self.player.walking_index as usize] as u32;
+        //let previous_frame = frames[self.player.walking_index as usize] as u32;
 
         let level_origin =
             Transform::new().set_origin(&Transform::new().translate(Vec3::new(8.0, 8.0, 0.0)));
@@ -407,13 +495,14 @@ impl Game {
             |enemy_space| self.test_level.collides_with(&level_origin, enemy_space),
             &self.player,
             &self.test_level,
+            &mut self.rng,
         );
 
-        let frame = frames[self.player.walking_index as usize] as u32;
-
-        if frame == 1 && previous_frame != 1 {
-            audio_system.play(&self.walk_audio, self.rng.random_range(0.8..1.2));
-        }
+        //let frame = frames[self.player.walking_index as usize] as u32;
+        //
+        //if frame == 1 && previous_frame != 1 {
+        //    audio_system.play(&self.walk_audio, self.rng.random_range(0.8..1.2));
+        //}
     }
 
     pub fn render(&self, drawer: &mut Drawer) {
@@ -446,17 +535,15 @@ impl Game {
         );
 
         let frames = [0, 1, 2, 1];
-        let frame = frames[self.player.walking_index as usize] as u32;
+        //let frame = frames[self.player.walking_index as usize] as u32;
 
         drawer.draw_square_slow(
             Some(&self.player.local_space(&view_transform)),
             Some(&EngineColor::WHITE),
-            self.player_texture
-                .get_sprite([frame, self.player.direction as u32])
-                .unwrap(),
+            self.player_texture.get_sprite([1, 0]).unwrap(),
         );
 
-        let frame = frames[self.enemy.controller.walking_index as usize] as u32;
+        //let frame = frames[self.enemy.controller.walking_index as usize] as u32;
 
         let color = if let EnemyAIState::Chasing(_) = self.enemy.state {
             EngineColor::RED
@@ -467,9 +554,7 @@ impl Game {
         drawer.draw_square_slow(
             Some(&self.enemy.controller.local_space(&view_transform)),
             Some(&color),
-            self.player_texture
-                .get_sprite([frame, self.enemy.controller.direction as u32])
-                .unwrap(),
+            self.enemy.animation.get_current_sprite(),
         );
     }
 }
