@@ -17,6 +17,7 @@ pub struct GizmoBindableTexture {
     pub bind_group: BindGroup,
 }
 
+#[derive(Clone)]
 pub struct GizmoSprite<'a> {
     pub texture: &'a GizmoBindableTexture,
     pub sprite_spec: SpriteSpec,
@@ -58,6 +59,7 @@ impl Vertex {
 
 //#[repr(C)]
 //#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone)]
 pub struct SpriteSpec {
     pub use_texture: u32,
     pub region_start: [f32; 2],

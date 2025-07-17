@@ -1,6 +1,6 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use game_build_tools::level::{alpha_blend_new, AbyssPolicy, LevelSpec};
+use game_build_tools::level::{self, alpha_blend_new, AbyssPolicy, LevelSpec};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 fn main() {
@@ -25,6 +25,11 @@ fn main() {
         .expect("Failed to render test level")
         .save("src/assets/level_generated/test.png")
         .expect("Failed to save test level image");
+
+    let collision_map = level_layer.value_where(|layer_val| layer_val == 1, 1);
+    collision_map
+        .dump_csv("src/assets/level_generated/collision.csv")
+        .expect("Failed to dump collision map CSV");
 
     // Find the places where we should put front walls
     let wall_locations = level_layer.convolve(|neighborhood| {

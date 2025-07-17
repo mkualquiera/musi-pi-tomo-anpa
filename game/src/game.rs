@@ -24,11 +24,10 @@ struct GameLevelSpec {
     tile_size: f32,
 }
 
-struct GameLevelLoadData<'a> {
+struct GameLevelLoadData {
     background_bytes: &'static [u8],
     decoration_bytes: &'static [u8],
-    collision_csv_bytes: &'a [u8],
-    data_json_bytes: &'a [u8],
+    collision_csv: &'static str,
 }
 
 impl GameLevelSpec {
@@ -50,10 +49,23 @@ impl GameLevelSpec {
             [1, 1],
         );
 
+        // Let's do the 0 iq collisions for now
+        let mut colliders = Vec::new();
+        for (y, row) in load_data.collision_csv.lines().enumerate() {
+            for (x, tile_id) in row.split(',').enumerate() {
+                if tile_id.trim() == "1" {
+                    let transform = Transform::new()
+                        .translate(Vec3::new(x as f32, y as f32, 0.0))
+                        .scale(Vec3::new(1.0, 1.0, 1.0));
+                    colliders.push(transform);
+                }
+            }
+        }
+
         Ok(Self {
             background,
             decoration,
-            collision: Vec::new(),
+            collision: colliders,
             num_tiles: (16, 16),
             tile_size: 32.0,
         })
@@ -62,6 +74,29 @@ impl GameLevelSpec {
     pub fn get_local_space(&self, base_transform: &Transform) -> Transform {
         let (width, height) = self.num_tiles;
         base_transform.scale(Vec3::new(width as f32, height as f32, 1.0))
+    }
+
+    pub fn collides_with(&self, origin: &Transform, other_space: &Transform) -> Option<Collision> {
+        for collider in &self.collision {
+            if let Some(collision) =
+                Collision::do_spaces_collide(&origin.then(collider), other_space)
+            {
+                return Some(collision);
+            }
+        }
+        None
+    }
+
+    pub fn visualize_collisions(
+        &self,
+        origin: &Transform,
+        drawer: &mut Drawer,
+        sprite: GizmoSprite,
+    ) {
+        for collider in &self.collision {
+            let transform = origin.then(collider);
+            drawer.draw_square_slow(Some(&transform), Some(&EngineColor::RED), sprite.clone());
+        }
     }
 }
 
@@ -84,7 +119,12 @@ impl Player {
 
     const PLAYER_SPEED: f32 = 4.0;
 
-    pub fn update(&mut self, input: &InputSystem, delta_time: f32) {
+    pub fn update<F: Fn(&Transform) -> Option<Collision>>(
+        &mut self,
+        input: &InputSystem,
+        delta_time: f32,
+        check_collision: F,
+    ) {
         let speed = Player::PLAYER_SPEED * delta_time;
         let mut player_direction = Vec2::ZERO;
         if input.is_physical_key_down(KeyCode::KeyW) {
@@ -115,11 +155,22 @@ impl Player {
             } else if player_direction.y > 0.0 {
                 self.direction = 0; // down
             }
-            self.position += player_direction;
             self.walking_counter += delta_time;
             if self.walking_counter > 0.15 {
                 self.walking_counter = 0.0;
                 self.walking_index = (self.walking_index + 1) % 4;
+            }
+
+            //self.position += player_direction;
+            let previous_x = self.position.x;
+            self.position.x += player_direction.x;
+            if check_collision(&self.collider(&Transform::new())).is_some() {
+                self.position.x = previous_x; // revert x movement if collision
+            }
+            let previous_y = self.position.y;
+            self.position.y += player_direction.y;
+            if check_collision(&self.collider(&Transform::new())).is_some() {
+                self.position.y = previous_y; // revert y movement if collision
             }
         } else {
             self.walking_counter = 0.20;
@@ -129,7 +180,17 @@ impl Player {
     }
 
     pub fn local_space(&self, base_transform: &Transform) -> Transform {
-        base_transform.translate(Vec3::new(self.position.x, self.position.y, 0.0))
+        base_transform
+            .translate(Vec3::new(self.position.x, self.position.y, 0.0))
+            .set_origin(&Transform::new().translate(Vec3::new(0.5, 0.5, 0.0)))
+    }
+
+    pub fn collider(&self, base_transform: &Transform) -> Transform {
+        base_transform
+            .translate(Vec3::new(self.position.x, self.position.y, 0.0))
+            .translate(Vec3::new(0.0, 0.25, 0.0))
+            .scale(Vec3::new(0.5, 0.5, 1.0)) // half size for collider
+            .set_origin(&Transform::new().translate(Vec3::new(0.5, 0.5, 0.0)))
     }
 }
 
@@ -142,6 +203,8 @@ pub struct Game {
     rng: StdRng,
 
     test_level: GameLevelSpec,
+
+    player_is_colliding: bool,
 }
 
 impl Game {
@@ -156,7 +219,7 @@ impl Game {
     pub fn init(rendering_system: &mut RenderingSystem, audio_system: &mut AudioSystem) -> Self {
         let mut rng = StdRng::from_seed([0; 32]); // Seed with zeros for reproducibility
         Self {
-            player: Player::new(Vec2::new(0.0, 0.0)),
+            player: Player::new(Vec2::new(1.0, 1.0)),
             objects: (0..20)
                 .map(|_| Vec2::new(rng.random_range(-10.0..10.0), rng.random_range(-10.0..10.0)))
                 .collect(),
@@ -176,14 +239,12 @@ impl Game {
                 GameLevelLoadData {
                     background_bytes: include_bytes!("assets/level_generated/floor.png"),
                     decoration_bytes: include_bytes!("assets/level_generated/test_with_walls.png"),
-                    collision_csv_bytes: include_bytes!(
-                        "assets/level/simplified/Level_0/Collision.csv"
-                    ),
-                    data_json_bytes: include_bytes!("assets/level/simplified/Level_0/data.json"),
+                    collision_csv: include_str!("assets/level_generated/collision.csv"),
                 },
                 rendering_system,
             )
             .expect("Failed to load game level"),
+            player_is_colliding: false,
         }
     }
 
@@ -191,7 +252,18 @@ impl Game {
         let frames = [0, 1, 2, 1];
 
         let previous_frame = frames[self.player.walking_index as usize] as u32;
-        self.player.update(input, delta_time);
+
+        let level_origin =
+            Transform::new().set_origin(&Transform::new().translate(Vec3::new(8.0, 8.0, 0.0)));
+        self.player_is_colliding = self
+            .test_level
+            .collides_with(&level_origin, &self.player.local_space(&Transform::new()))
+            .is_some();
+
+        self.player.update(input, delta_time, |player_space| {
+            self.test_level.collides_with(&level_origin, player_space)
+        });
+
         let frame = frames[self.player.walking_index as usize] as u32;
 
         if frame == 1 && previous_frame != 1 {
@@ -210,12 +282,13 @@ impl Game {
         let view_transform = self.camera.get_transform().set_origin(
             &self
                 .player
-                .local_space(&Transform::new())
-                .translate(Vec3::new(0.5, 0.5, 0.0)),
+                .local_space(&Transform::new().translate(Vec3::new(0.5, 0.5, 0.0))),
         );
 
         // Draw level
-        let level_transform = self.test_level.get_local_space(&view_transform);
+        let level_transform = self.test_level.get_local_space(
+            &view_transform.set_origin(&Transform::new().translate(Vec3::new(8.0, 8.0, 0.0))),
+        );
         drawer.draw_square_slow(
             Some(&level_transform),
             Some(&EngineColor::WHITE),
@@ -226,6 +299,13 @@ impl Game {
             Some(&EngineColor::WHITE),
             self.test_level.decoration.get_sprite([0, 0]).unwrap(),
         );
+
+        // Visualize collisions
+        //self.test_level.visualize_collisions(
+        //    &view_transform.set_origin(&Transform::new().translate(Vec3::new(0.0, 0.0, 0.0))),
+        //    drawer,
+        //    self.player_texture.get_sprite([0, 0]).unwrap(),
+        //);
 
         // Draw objects
         //for i in 0..1 {
@@ -241,12 +321,25 @@ impl Game {
         let frames = [0, 1, 2, 1];
         let frame = frames[self.player.walking_index as usize] as u32;
 
+        let color = if self.player_is_colliding {
+            EngineColor::GREEN
+        } else {
+            EngineColor::WHITE
+        };
+
         drawer.draw_square_slow(
             Some(&self.player.local_space(&view_transform)),
-            Some(&EngineColor::WHITE),
+            Some(&color),
             self.player_texture
                 .get_sprite([frame, self.player.direction as u32])
                 .unwrap(),
         );
+
+        // Draw player collider
+        //drawer.draw_square_slow(
+        //    Some(&self.player.collider(&view_transform)),
+        //    Some(&EngineColor::BLUE),
+        //    self.player_texture.get_sprite([0, 0]).unwrap(),
+        //);
     }
 }

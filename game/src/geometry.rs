@@ -95,4 +95,12 @@ impl Transform {
             raw: mat.to_cols_array_2d(),
         }
     }
+
+    pub fn then(&self, other: &Self) -> Self {
+        let mat = self.matrix * other.matrix;
+        Self {
+            matrix: mat,
+            raw: mat.to_cols_array_2d(),
+        }
+    }
 }
