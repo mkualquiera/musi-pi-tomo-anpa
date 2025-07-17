@@ -1,5 +1,4 @@
 use glam::{Vec2, Vec3};
-use log::info;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use wgpu::Color;
 use winit::keyboard::KeyCode;
@@ -10,7 +9,7 @@ use crate::{
     geometry::Transform,
     ortographic_camera::OrthoCamera,
     renderer::{
-        gizmo::{GizmoBindableTexture, GizmoSprite, GizmoSpriteSheet, SpriteSpec},
+        gizmo::{GizmoSprite, GizmoSpriteSheet},
         Drawer, EngineColor, RenderingSystem,
     },
     InputSystem,
@@ -214,7 +213,7 @@ impl Game {
     }
 
     pub fn init(rendering_system: &mut RenderingSystem, audio_system: &mut AudioSystem) -> Self {
-        let mut rng = StdRng::from_seed([0; 32]); // Seed with zeros for reproducibility
+        let rng = StdRng::from_seed([0; 32]); // Seed with zeros for reproducibility
         Self {
             player: Player::new(Vec2::new(1.0, 1.0)),
             camera: {

@@ -7,16 +7,13 @@ mod renderer;
 
 use core::panic;
 use game::Game;
-use log::info;
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::Arc;
-use std::{cell::RefCell, sync::Mutex};
+use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
-use web_sys::{HtmlCanvasElement, Window};
+use web_sys::HtmlCanvasElement;
 use winit::event::{ElementState, KeyEvent, MouseButton};
-use winit::keyboard::{Key, KeyCode, PhysicalKey};
-use winit::window;
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::{
     application::ApplicationHandler,
     event::WindowEvent,

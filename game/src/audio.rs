@@ -1,8 +1,6 @@
 use std::{
     cell::RefCell,
-    future::IntoFuture,
     rc::Rc,
-    sync::{Arc, Mutex},
 };
 
 use log::error;

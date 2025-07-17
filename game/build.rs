@@ -1,6 +1,6 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use game_build_tools::level::{self, alpha_blend_new, AbyssPolicy, LevelSpec};
+use game_build_tools::level::{alpha_blend_new, AbyssPolicy, LevelSpec};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
 fn main() {

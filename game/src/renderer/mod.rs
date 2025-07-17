@@ -1,15 +1,13 @@
 pub mod gizmo;
 
-use glam::{Mat4, Vec3};
+use glam::Mat4;
 use image::GenericImageView;
-use log::info;
 use std::{
     mem,
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 use wgpu::{
-    BindGroup, Buffer, Color, CommandBuffer, CommandEncoder, Device, Queue, RenderPass,
-    RenderPipeline, Surface, SurfaceConfiguration, TexelCopyBufferInfo, TexelCopyBufferLayout,
+    Buffer, Color, CommandBuffer, Device, Queue, Surface, SurfaceConfiguration, TexelCopyBufferLayout,
     Texture, TextureDescriptor, TextureView,
 };
 use winit::window::Window;

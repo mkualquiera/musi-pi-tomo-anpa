@@ -1,4 +1,4 @@
-use glam::{Vec2, Vec3};
+use glam::Vec3;
 
 use crate::geometry::Transform;
 

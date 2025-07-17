@@ -1,5 +1,4 @@
 use glam::Vec3;
-use log::info;
 
 use crate::geometry::Transform;
 

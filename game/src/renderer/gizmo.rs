@@ -7,7 +7,7 @@ use wgpu::{
 
 use crate::{
     geometry::Transform,
-    renderer::{EngineColor, RenderingSystem},
+    renderer::EngineColor,
 };
 
 pub struct GizmoBindableTexture {
