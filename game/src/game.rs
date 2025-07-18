@@ -14,7 +14,7 @@ use crate::{
         gizmo::{GizmoSprite, GizmoSpriteSheet},
         Drawer, EngineColor, RenderingSystem,
     },
-    InputSystem,
+    InputSystem, InputSystemConfig, KeyPressGroupHandle,
 };
 
 struct GameLevelSpec {
@@ -140,6 +140,10 @@ impl MovementIntention {
             left: input.is_physical_key_down(KeyCode::KeyA),
             right: input.is_physical_key_down(KeyCode::KeyD),
         }
+    }
+
+    pub fn is_idle(&self) -> bool {
+        !self.up && !self.down && !self.left && !self.right
     }
 }
 
@@ -325,7 +329,7 @@ impl Enemy {
                     }
                 }
 
-                if !found_something && rng.random_bool(2.0 * delta_time as f64) {
+                if !found_something && rng.random_bool((2.0 * delta_time as f64).min(1.0)) {
                     // Randomly decide to wander
                     let direction = rng.random_range(0..5);
                     let orientation = match direction {
@@ -430,8 +434,66 @@ impl Enemy {
     }
 }
 
+struct Player {
+    controller: MovementController,
+    animation: CharacterWalkAnimation,
+    direction_group_handle: KeyPressGroupHandle,
+}
+
+impl Player {
+    pub fn new(
+        position: Vec2,
+        walking_sprite_sheet: GizmoSpriteSheet,
+        input_config: &mut InputSystemConfig,
+    ) -> Self {
+        Self {
+            controller: MovementController::new(position, 3.0),
+            animation: CharacterWalkAnimation::new(
+                walking_sprite_sheet,
+                CharacterOrientation::Down,
+            ),
+            direction_group_handle: input_config.allocate_group(&[
+                KeyCode::KeyW,
+                KeyCode::KeyS,
+                KeyCode::KeyA,
+                KeyCode::KeyD,
+            ]),
+        }
+    }
+
+    pub fn update<CollidesWithWorld: Fn(&Transform) -> Option<Collision>>(
+        &mut self,
+        input: &InputSystem,
+        delta_time: f32,
+        check_collision: CollidesWithWorld,
+    ) {
+        let movement_intention = MovementIntention::from_input(input);
+
+        self.controller.update(
+            &MovementIntention::from_input(input),
+            delta_time,
+            check_collision,
+        );
+
+        // Simple logic
+        let desired_orientation = if movement_intention.is_idle() {
+            None
+        } else {
+            match input.get_last_key_pressed(&self.direction_group_handle) {
+                Some(KeyCode::KeyW) => Some(CharacterOrientation::Up),
+                Some(KeyCode::KeyS) => Some(CharacterOrientation::Down),
+                Some(KeyCode::KeyA) => Some(CharacterOrientation::Left),
+                Some(KeyCode::KeyD) => Some(CharacterOrientation::Right),
+                _ => None,
+            }
+        };
+
+        self.animation.update(delta_time, desired_orientation);
+    }
+}
+
 pub struct Game {
-    player: MovementController,
+    player: Player,
     camera: OrthoCamera,
     player_texture: GizmoSpriteSheet,
     walk_audio: AudioHandle,
@@ -451,10 +513,23 @@ impl Game {
         32
     }
 
-    pub fn init(rendering_system: &mut RenderingSystem, audio_system: &mut AudioSystem) -> Self {
+    pub fn init(
+        rendering_system: &mut RenderingSystem,
+        audio_system: &mut AudioSystem,
+        input_config: &mut InputSystemConfig,
+    ) -> Self {
         let rng = StdRng::from_seed([0; 32]); // Seed with zeros for reproducibility
         Self {
-            player: MovementController::new(Vec2::new(1.0, 1.0), 3.0),
+            player: Player::new(
+                Vec2::new(1.0, 1.0),
+                rendering_system.gizmo_sprite_sheet_from_encoded_image(
+                    include_bytes!("assets/char_template.png"),
+                    [0.0, 0.0],
+                    [1.0, 1.0],
+                    [3, 4],
+                ),
+                input_config,
+            ),
             camera: {
                 let (width, height) = Game::target_size();
                 OrthoCamera::new(width as f32, height as f32, 32.0)
@@ -497,16 +572,19 @@ impl Game {
         let level_origin =
             Transform::new().set_origin(&Transform::new().translate(Vec3::new(8.0, 8.0, 0.0)));
 
-        self.player.update(
-            &MovementIntention::from_input(input),
-            delta_time,
-            |player_space| self.test_level.collides_with(&level_origin, player_space),
-        );
+        //self.player.update(
+        //    &MovementIntention::from_input(input),
+        //    delta_time,
+        //    |player_space| self.test_level.collides_with(&level_origin, player_space),
+        //);
+        self.player.update(input, delta_time, |player_space| {
+            self.test_level.collides_with(&level_origin, player_space)
+        });
 
         self.enemy.update(
             delta_time,
             |enemy_space| self.test_level.collides_with(&level_origin, enemy_space),
-            &self.player,
+            &self.player.controller,
             &self.test_level,
             &mut self.rng,
         );
@@ -529,6 +607,7 @@ impl Game {
         let view_transform = self.camera.get_transform().set_origin(
             &self
                 .player
+                .controller
                 .local_space(&Transform::new().translate(Vec3::new(0.5, 0.5, 0.0))),
         );
 
@@ -551,9 +630,9 @@ impl Game {
         //let frame = frames[self.player.walking_index as usize] as u32;
 
         drawer.draw_square_slow(
-            Some(&self.player.local_space(&view_transform)),
+            Some(&self.player.controller.local_space(&view_transform)),
             Some(&EngineColor::WHITE),
-            self.player_texture.get_sprite([1, 0]).unwrap(),
+            self.player.animation.get_current_sprite(),
         );
 
         //let frame = frames[self.enemy.controller.walking_index as usize] as u32;

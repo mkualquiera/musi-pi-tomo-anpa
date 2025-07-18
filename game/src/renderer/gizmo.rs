@@ -5,10 +5,7 @@ use wgpu::{
     SurfaceConfiguration, Texture,
 };
 
-use crate::{
-    geometry::Transform,
-    renderer::EngineColor,
-};
+use crate::{geometry::Transform, renderer::EngineColor};
 
 pub struct GizmoBindableTexture {
     pub texture: wgpu::Texture,

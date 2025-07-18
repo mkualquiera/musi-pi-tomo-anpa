@@ -2,20 +2,19 @@ pub mod gizmo;
 
 use glam::Mat4;
 use image::GenericImageView;
-use std::{
-    mem,
-    sync::Arc,
-};
+use std::{mem, sync::Arc};
 use wgpu::{
-    Buffer, Color, CommandBuffer, Device, Queue, Surface, SurfaceConfiguration, TexelCopyBufferLayout,
-    Texture, TextureDescriptor, TextureView,
+    wgc::device, Buffer, Color, CommandBuffer, Device, Queue, Surface, SurfaceConfiguration,
+    TexelCopyBufferLayout, Texture, TextureDescriptor, TextureView,
 };
 use winit::window::Window;
 
 use crate::{
     game::Game,
     geometry::Transform,
-    renderer::gizmo::{GizmoBindableTexture, GizmoRenderPipeline, GizmoSprite, GizmoSpriteSheet},
+    renderer::gizmo::{
+        GizmoBindableTexture, GizmoRenderPipeline, GizmoSprite, GizmoSpriteSheet, SpriteSpec,
+    },
 };
 
 #[repr(C)]
@@ -80,6 +79,8 @@ pub struct RenderingSystem {
     gizmo_pipeline: GizmoRenderPipeline,
 
     alignment_hint: u32,
+
+    white_gizmo_texture: GizmoBindableTexture,
 }
 
 pub struct Drawer<'a> {
@@ -153,6 +154,11 @@ impl RenderingSystem {
             100.0,
         ));
 
+        let white_gizmo_texture = gizmo_pipeline.make_texture_bindable(
+            &device,
+            Self::create_texture(&device, &queue, 1, 1, Some(&[255, 255, 255, 255])),
+        );
+
         Self {
             surface,
             device,
@@ -163,6 +169,7 @@ impl RenderingSystem {
             target_aspect_ratio,
             gizmo_pipeline,
             alignment_hint,
+            white_gizmo_texture,
         }
     }
 
@@ -212,8 +219,14 @@ impl RenderingSystem {
         Ok(())
     }
 
-    pub fn create_texture(&mut self, width: u32, height: u32, data: Option<&[u8]>) -> Texture {
-        let texture = self.device.create_texture(&TextureDescriptor {
+    pub fn create_texture(
+        device: &Device,
+        queue: &Queue,
+        width: u32,
+        height: u32,
+        data: Option<&[u8]>,
+    ) -> Texture {
+        let texture = device.create_texture(&TextureDescriptor {
             label: Some("Texture"),
             size: wgpu::Extent3d {
                 width,
@@ -228,7 +241,7 @@ impl RenderingSystem {
             view_formats: &[],
         });
         if let Some(data) = data {
-            self.queue.write_texture(
+            queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &texture,
                     mip_level: 0,
@@ -252,21 +265,29 @@ impl RenderingSystem {
     }
 
     pub fn create_gizmo_texture(
-        &mut self,
+        device: &Device,
+        queue: &Queue,
+        gizmo_pipeline: &GizmoRenderPipeline,
         width: u32,
         height: u32,
         data: &[u8],
     ) -> GizmoBindableTexture {
-        let texture = self.create_texture(width, height, Some(data));
-        self.gizmo_pipeline
-            .make_texture_bindable(&self.device, texture)
+        let texture = Self::create_texture(device, queue, width, height, Some(data));
+        gizmo_pipeline.make_texture_bindable(device, texture)
     }
 
     pub fn gizmo_texture_from_encoded_image(&mut self, image_data: &[u8]) -> GizmoBindableTexture {
         let image = image::load_from_memory(image_data).unwrap();
         let (width, height) = image.dimensions();
         let rgba = image.to_rgba8();
-        self.create_gizmo_texture(width, height, rgba.as_raw().as_slice())
+        Self::create_gizmo_texture(
+            &self.device,
+            &self.queue,
+            &self.gizmo_pipeline,
+            width,
+            height,
+            rgba.as_raw().as_slice(),
+        )
     }
 
     pub fn gizmo_sprite_sheet_from_encoded_image(
@@ -426,6 +447,19 @@ impl<'a> Drawer<'a> {
                 );
             },
         );
+    }
+
+    pub fn white_sprite(self) -> GizmoSprite<'a> {
+        GizmoSprite {
+            texture: &self.renderer.white_gizmo_texture,
+            sprite_spec: SpriteSpec {
+                use_texture: 1,
+                region_start: [0.0, 0.0],
+                region_end: [1.0, 1.0],
+                num_tiles: [1, 1],
+                selected_tile: [0, 0],
+            },
+        }
     }
 
     pub fn flush(&mut self) {

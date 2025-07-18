@@ -8,6 +8,7 @@ mod renderer;
 use core::panic;
 use game::Game;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
 use wasm_bindgen::prelude::*;
@@ -46,6 +47,7 @@ enum AppState {
         renderer: Arc<Mutex<Option<RenderingSystem>>>,
         window: Arc<Mutex<Option<Arc<WinitWindow>>>>,
         audio: Arc<Mutex<Option<AudioSystem>>>,
+        input_config: Arc<Mutex<Option<InputSystemConfig>>>,
     },
     Loaded {
         game: Game,
@@ -56,14 +58,52 @@ enum AppState {
     },
 }
 
-#[derive(Default)]
+struct KeyPressGroup {
+    keys: HashSet<KeyCode>,
+    stack: Vec<KeyCode>,
+}
+
+pub struct KeyPressGroupHandle {
+    index: usize,
+}
+
+struct InputSystemConfig {
+    key_press_groups: Vec<KeyPressGroup>,
+}
+
+impl InputSystemConfig {
+    fn new() -> Self {
+        Self {
+            key_press_groups: Vec::new(),
+        }
+    }
+
+    fn allocate_group(&mut self, keys: &[KeyCode]) -> KeyPressGroupHandle {
+        let index = self.key_press_groups.len();
+        self.key_press_groups.push(KeyPressGroup {
+            keys: keys.iter().cloned().collect(),
+            stack: Vec::new(),
+        });
+        KeyPressGroupHandle { index }
+    }
+}
+
 struct InputSystem {
     mouse_position: (f64, f64),
     mouse_buttons: HashMap<MouseButton, ElementState>,
     physical_key_states: HashMap<KeyCode, ElementState>,
+    key_press_groups: Vec<KeyPressGroup>,
 }
 
 impl InputSystem {
+    pub fn new(config: InputSystemConfig) -> Self {
+        Self {
+            mouse_position: (0.0, 0.0),
+            mouse_buttons: HashMap::new(),
+            physical_key_states: HashMap::new(),
+            key_press_groups: config.key_press_groups,
+        }
+    }
     fn is_mouse_down(&self, button: MouseButton) -> bool {
         matches!(self.mouse_buttons.get(&button), Some(ElementState::Pressed))
     }
@@ -87,6 +127,11 @@ impl InputSystem {
             None => false,
         }
     }
+    fn get_last_key_pressed(&self, group_handle: &KeyPressGroupHandle) -> Option<KeyCode> {
+        self.key_press_groups
+            .get(group_handle.index)
+            .and_then(|group| group.stack.last().cloned())
+    }
 }
 
 impl AppState {
@@ -106,6 +151,7 @@ impl AppState {
                 renderer,
                 window,
                 audio,
+                input_config,
             } => {
                 // Check if all components are ready
                 let renderer_ready = renderer.lock().unwrap().is_some();
@@ -119,14 +165,15 @@ impl AppState {
                     let game = game.lock().unwrap().take().unwrap();
                     let window = window.lock().unwrap().take().unwrap();
                     let audio = audio.lock().unwrap().take().unwrap();
+                    let input_config = input_config.lock().unwrap().take().unwrap();
 
                     // Replace self with the new state
                     *self = AppState::Loaded {
                         game,
                         renderer,
                         window,
-                        input: InputSystem::default(),
-                        audio: audio,
+                        input: InputSystem::new(input_config),
+                        audio,
                     };
                     true
                 } else {
@@ -151,6 +198,7 @@ impl WebApp {
                 renderer: Arc::new(Mutex::new(None)),
                 window: Arc::new(Mutex::new(None)),
                 audio: Arc::new(Mutex::new(None)),
+                input_config: Arc::new(Mutex::new(None)),
             }),
             last_time: None,
         }
@@ -197,6 +245,7 @@ impl ApplicationHandler for WebApp {
             renderer,
             window: window_state,
             audio,
+            input_config,
         } = &mut *self.state
         {
             // Store the window in the state
@@ -205,15 +254,19 @@ impl ApplicationHandler for WebApp {
             let renderer_clone = Arc::clone(renderer);
             let game_clone = Arc::clone(game);
             let audio_clone = Arc::clone(audio);
+            let input_config_clone = Arc::clone(input_config);
             wasm_bindgen_futures::spawn_local(async move {
                 let mut renderer =
                     RenderingSystem::new(window.clone(), target_w, target_h, alignment_hint).await;
                 let mut audio_system = AudioSystem::new();
-                let game = Game::init(&mut renderer, &mut audio_system);
+
+                let mut input_config = InputSystemConfig::new();
+                let game = Game::init(&mut renderer, &mut audio_system, &mut input_config);
 
                 *renderer_clone.lock().unwrap() = Some(renderer);
                 *game_clone.lock().unwrap() = Some(game);
                 *audio_clone.lock().unwrap() = Some(audio_system);
+                *input_config_clone.lock().unwrap() = Some(input_config);
             });
         } else {
             panic!("AppState is not Loading");
@@ -290,6 +343,26 @@ impl ApplicationHandler for WebApp {
                     } = event;
                     if let PhysicalKey::Code(code) = physical_key {
                         input.physical_key_states.insert(code, state);
+                        if state == ElementState::Pressed {
+                            // Check if this key is part of any key press group
+                            for group in &mut input.key_press_groups {
+                                if group.keys.contains(&code) {
+                                    group.stack.push(code);
+                                }
+                            }
+                        } else if state == ElementState::Released {
+                            // If the head is released, pop it from the stack
+                            for group in &mut input.key_press_groups {
+                                if group.keys.contains(&code) {
+                                    if let Some(last) = group.stack.last() {
+                                        if *last == code {
+                                            group.stack.pop();
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     audio.on_user_interaction();
                 }
