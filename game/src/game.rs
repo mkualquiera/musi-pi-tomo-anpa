@@ -302,18 +302,22 @@ struct Enemy {
     state: EnemyAIState,
     animation: CharacterWalkAnimation,
     attack_controller: AttackController,
+    health: f32,
+    max_health: f32,
 }
 
 impl Enemy {
     pub fn new(position: Vec2, walking_sprite_sheet: GizmoSpriteSheet) -> Self {
         Self {
-            controller: MovementController::new(position, 2.0),
+            controller: MovementController::new(position, 1.0),
             state: EnemyAIState::Idle,
             animation: CharacterWalkAnimation::new(
                 walking_sprite_sheet,
                 CharacterOrientation::Down,
             ),
             attack_controller: AttackController::new(),
+            health: 20.0,
+            max_health: 20.0,
         }
     }
 
@@ -514,6 +518,25 @@ impl Enemy {
             self.animation.orientation,
         )
     }
+
+    pub fn health_bar_space(&self, base_transform: &Transform, full: bool) -> Transform {
+        let health_ratio = if !full {
+            self.health / self.max_health
+        } else {
+            1.0
+        };
+        let local_space = self.controller.local_space(base_transform);
+        local_space
+            .translate(Vec3::new(0.5, 0.0, 0.0)) // Position above the enemy
+            .translate(Vec3::new(0.0, -0.1, 0.0)) // Position above the enemy
+            //.translate(Vec3::new(0.5, 0.5, 0.0)) // Position above the enemy
+            .scale(Vec3::new(0.8, 0.1, 1.0))
+            .set_origin(&Transform::new().translate(Vec3::new(0.5, 0.5, 0.0)))
+            .scale(Vec3::new(health_ratio, 1.0, 1.0)) // Scale based on health
+                                                      //.translate(Vec3::new(0.0, -0.1, 0.0)) // Position above the enemy
+                                                      //.set_origin(&Transform::new().translate(Vec3::new(0.0, 0.5, 0.0)))
+                                                      //.scale(Vec3::new(health_ratio, 1.0, 1.0)) // Scale based on health
+    }
 }
 
 enum AttackState {
@@ -600,6 +623,7 @@ struct Player {
     animation: CharacterWalkAnimation,
     direction_group_handle: KeyPressGroupHandle,
     attack_controller: AttackController,
+    health: f32,
 }
 
 impl Player {
@@ -609,7 +633,7 @@ impl Player {
         input_config: &mut InputSystemConfig,
     ) -> Self {
         Self {
-            controller: MovementController::new(position, 3.0),
+            controller: MovementController::new(position, 2.0),
             animation: CharacterWalkAnimation::new(
                 walking_sprite_sheet,
                 CharacterOrientation::Down,
@@ -621,6 +645,7 @@ impl Player {
                 KeyCode::KeyD,
             ]),
             attack_controller: AttackController::new(),
+            health: 100.0, // Default health
         }
     }
 
@@ -670,14 +695,10 @@ impl Player {
 pub struct Game {
     player: Player,
     camera: OrthoCamera,
-    player_texture: GizmoSpriteSheet,
     walk_audio: AudioHandle,
     rng: StdRng,
-
     test_level: GameLevelSpec,
-
     enemy: Enemy,
-
     attacking_enemy: bool,
 }
 
@@ -711,12 +732,6 @@ impl Game {
                 let (width, height) = Game::target_size();
                 OrthoCamera::new(width as f32, height as f32, 32.0)
             },
-            player_texture: rendering_system.gizmo_sprite_sheet_from_encoded_image(
-                include_bytes!("assets/char_template.png"),
-                [0.0, 0.0],
-                [1.0, 1.0],
-                [3, 4],
-            ),
             walk_audio: audio_system.load_buffer(include_bytes!("assets/walk.wav")),
             rng: StdRng::from_seed([0; 32]), // Seed with zeros for reproducibility
             test_level: GameLevelSpec::load(
@@ -751,22 +766,36 @@ impl Game {
         let level_origin =
             Transform::new().set_origin(&Transform::new().translate(Vec3::new(8.0, 8.0, 0.0)));
 
-        //self.player.update(
-        //    &MovementIntention::from_input(input),
-        //    delta_time,
-        //    |player_space| self.test_level.collides_with(&level_origin, player_space),
-        //);
-        self.player.update(input, delta_time, |player_space| {
-            self.test_level.collides_with(&level_origin, player_space)
-        });
+        if self.player.health > 0.0 {
+            self.player.update(input, delta_time, |player_space| {
+                self.test_level.collides_with(&level_origin, player_space)
+            });
+        }
 
-        self.enemy.update(
-            delta_time,
-            |enemy_space| self.test_level.collides_with(&level_origin, enemy_space),
-            &self.player.controller,
-            &self.test_level,
-            &mut self.rng,
-        );
+        if self.enemy.health > 0.0 {
+            self.enemy.update(
+                delta_time,
+                |enemy_space| self.test_level.collides_with(&level_origin, enemy_space),
+                &self.player.controller,
+                &self.test_level,
+                &mut self.rng,
+            );
+
+            if let Some(attack_space) = self.enemy.get_attack_space(&level_origin) {
+                if Collision::do_spaces_collide(
+                    &attack_space,
+                    &self.player.controller.collider(&level_origin),
+                )
+                .is_some()
+                {
+                    self.player.health -= 50.0 * delta_time; // Deal damage to the player
+                    if self.player.health <= 0.0 {
+                        self.player.health = 0.0; // Prevent negative health
+                        info!("Player defeated!");
+                    }
+                }
+            }
+        }
 
         //let frame = frames[self.player.walking_index as usize] as u32;
         //
@@ -780,6 +809,13 @@ impl Game {
                 &self.enemy.controller.collider(&level_origin),
             )
             .is_some();
+            if self.attacking_enemy {
+                self.enemy.health -= 10.0 * delta_time; // Deal damage to the enemy
+                if self.enemy.health <= 0.0 {
+                    self.enemy.health = 0.0; // Prevent negative health
+                    info!("Enemy defeated!");
+                }
+            }
         } else {
             self.attacking_enemy = false;
         }
@@ -815,12 +851,14 @@ impl Game {
             self.test_level.decoration.get_sprite([0, 0]).unwrap(),
         );
 
-        let frames = [0, 1, 2, 1];
-        //let frame = frames[self.player.walking_index as usize] as u32;
-
+        let color = if self.player.health > 0.0 {
+            EngineColor::WHITE
+        } else {
+            EngineColor::BLACK
+        };
         drawer.draw_square_slow(
             Some(&self.player.controller.local_space(&view_transform)),
-            Some(&EngineColor::WHITE),
+            Some(&color),
             self.player.animation.get_current_sprite(),
         );
 
@@ -838,22 +876,63 @@ impl Game {
 
         //let frame = frames[self.enemy.controller.walking_index as usize] as u32;
 
-        let color = if let EnemyAIState::Chasing(_) = self.enemy.state {
-            EngineColor::RED
-        } else {
-            EngineColor::BLUE
-        };
+        if self.enemy.health > 0.0 {
+            let color = if let EnemyAIState::Chasing(_) = self.enemy.state {
+                EngineColor::RED
+            } else {
+                EngineColor::BLUE
+            };
 
-        drawer.draw_square_slow(
-            Some(&self.enemy.controller.local_space(&view_transform)),
-            Some(&color),
-            self.enemy.animation.get_current_sprite(),
-        );
+            drawer.draw_square_slow(
+                Some(&self.enemy.controller.local_space(&view_transform)),
+                Some(&color),
+                self.enemy.animation.get_current_sprite(),
+            );
+
+            let white_sprite = drawer.white_sprite();
+
+            if let Some(attack_space) = self.enemy.get_attack_space(&view_transform) {
+                drawer.draw_square_slow(
+                    Some(&attack_space),
+                    Some(&EngineColor::GREEN),
+                    white_sprite,
+                );
+            }
+
+            // Draw enemy health bar
+            drawer.draw_square_slow(
+                Some(&self.enemy.health_bar_space(&view_transform, true)),
+                Some(&EngineColor::RED.additive_darken(0.7)),
+                white_sprite,
+            );
+            drawer.draw_square_slow(
+                Some(&self.enemy.health_bar_space(&view_transform, false)),
+                Some(&EngineColor::RED),
+                white_sprite,
+            );
+        }
+
+        // Draw player health
+        let ui_transform = drawer.ortho;
 
         let white_sprite = drawer.white_sprite();
-
-        if let Some(attack_space) = self.enemy.get_attack_space(&view_transform) {
-            drawer.draw_square_slow(Some(&attack_space), Some(&EngineColor::GREEN), white_sprite);
-        }
+        drawer.draw_square_slow(
+            Some(
+                &ui_transform
+                    .translate(Vec3::new(16.0, 16.0, 0.0))
+                    .scale(Vec3::new(100.0, 16.0, 1.0)),
+            ),
+            Some(&EngineColor::RED.additive_darken(0.7)),
+            white_sprite,
+        );
+        drawer.draw_square_slow(
+            Some(
+                &ui_transform
+                    .translate(Vec3::new(16.0, 16.0, 0.0))
+                    .scale(Vec3::new(self.player.health, 16.0, 1.0)),
+            ),
+            Some(&EngineColor::RED),
+            white_sprite,
+        );
     }
 }

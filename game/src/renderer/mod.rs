@@ -64,6 +64,15 @@ impl EngineColor {
         b: 0.5,
         a: 1.0,
     };
+
+    pub fn additive_darken(&self, factor: f32) -> Self {
+        Self {
+            r: (self.r - factor).max(0.0),
+            g: (self.g - factor).max(0.0),
+            b: (self.b - factor).max(0.0),
+            a: self.a,
+        }
+    }
 }
 
 pub struct RenderingSystem {
