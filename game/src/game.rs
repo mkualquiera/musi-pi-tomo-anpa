@@ -1,5 +1,6 @@
 use glam::{Vec2, Vec3};
 use glyphon::cosmic_text::ttf_parser::math;
+use log::info;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use wgpu::Color;
 use winit::keyboard::KeyCode;
@@ -211,7 +212,7 @@ impl MovementController {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum CharacterOrientation {
     Up,
     Down,
@@ -309,6 +310,7 @@ impl Enemy {
 
         match self.state {
             EnemyAIState::Idle | EnemyAIState::Wandering(_) => {
+                let mut found_something = false;
                 if distance_to_player < 3.0 {
                     let can_see = !GameLevelSpec::line_collides_with_level(
                         self.controller.feet_position(),
@@ -319,17 +321,27 @@ impl Enemy {
                     );
                     if can_see {
                         self.state = EnemyAIState::Chasing(player.feet_position().floor() + 0.5);
+                        found_something = true;
                     }
-                } else if rng.random_bool(1.0 * delta_time as f64) {
+                }
+
+                if !found_something && rng.random_bool(2.0 * delta_time as f64) {
                     // Randomly decide to wander
-                    let direction = rng.random_range(0..4);
+                    let direction = rng.random_range(0..5);
                     let orientation = match direction {
-                        0 => CharacterOrientation::Up,
-                        1 => CharacterOrientation::Down,
-                        2 => CharacterOrientation::Left,
-                        _ => CharacterOrientation::Right,
+                        0 => Some(CharacterOrientation::Up),
+                        1 => Some(CharacterOrientation::Down),
+                        2 => Some(CharacterOrientation::Left),
+                        3 => Some(CharacterOrientation::Right),
+                        _ => None,
                     };
-                    self.state = EnemyAIState::Wandering(orientation);
+                    if let Some(orientation) = orientation {
+                        self.state = EnemyAIState::Wandering(orientation);
+                        info!("Enemy wandering in direction: {:?}", orientation);
+                    } else {
+                        self.state = EnemyAIState::Idle; // No valid direction, stay idle
+                        info!("Enemy idle, no valid wandering direction");
+                    }
                 }
             }
             EnemyAIState::Chasing(target_position) => {
@@ -408,6 +420,7 @@ impl Enemy {
             EnemyAIState::Chasing(_) | EnemyAIState::Wandering(_) => {
                 if last_position == self.controller.position {
                     self.state = EnemyAIState::Idle; // If we didn't move, go back to idle
+                    info!("Enemy idle, no movement detected");
                 }
             }
             _ => {
