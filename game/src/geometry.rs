@@ -36,6 +36,14 @@ impl Transform {
         }
     }
 
+    pub fn rotate_2d(&self, angle: f32) -> Self {
+        let mat = self.matrix * glam::Mat4::from_rotation_z(angle);
+        Self {
+            matrix: mat,
+            raw: mat.to_cols_array_2d(),
+        }
+    }
+
     pub fn scale(&self, scale: Vec3) -> Self {
         let mat = self.matrix * glam::Mat4::from_scale(scale);
         Self {

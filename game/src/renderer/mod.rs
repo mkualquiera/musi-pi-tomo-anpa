@@ -449,7 +449,7 @@ impl<'a> Drawer<'a> {
         );
     }
 
-    pub fn white_sprite(self) -> GizmoSprite<'a> {
+    pub fn white_sprite(&self) -> GizmoSprite<'a> {
         GizmoSprite {
             texture: &self.renderer.white_gizmo_texture,
             sprite_spec: SpriteSpec {

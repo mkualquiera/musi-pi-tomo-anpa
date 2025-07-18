@@ -1,3 +1,5 @@
+use core::f32;
+
 use glam::{Vec2, Vec3};
 use glyphon::cosmic_text::ttf_parser::math;
 use log::info;
@@ -145,6 +147,19 @@ impl MovementIntention {
     pub fn is_idle(&self) -> bool {
         !self.up && !self.down && !self.left && !self.right
     }
+
+    pub fn idle() -> Self {
+        Self {
+            up: false,
+            down: false,
+            left: false,
+            right: false,
+        }
+    }
+
+    pub fn any(&self) -> bool {
+        self.up || self.down || self.left || self.right
+    }
 }
 
 impl MovementController {
@@ -279,12 +294,14 @@ enum EnemyAIState {
     Idle,
     Chasing(Vec2),
     Wandering(CharacterOrientation),
+    Engaging,
 }
 
 struct Enemy {
     controller: MovementController,
     state: EnemyAIState,
     animation: CharacterWalkAnimation,
+    attack_controller: AttackController,
 }
 
 impl Enemy {
@@ -296,6 +313,7 @@ impl Enemy {
                 walking_sprite_sheet,
                 CharacterOrientation::Down,
             ),
+            attack_controller: AttackController::new(),
         }
     }
 
@@ -358,6 +376,24 @@ impl Enemy {
                 );
                 if can_see {
                     self.state = EnemyAIState::Chasing(player.feet_position().floor() + 0.5);
+
+                    let distance_to_target = self
+                        .controller
+                        .feet_position()
+                        .distance(player.feet_position());
+
+                    if distance_to_target < 0.7 {
+                        self.state = EnemyAIState::Engaging;
+                    }
+                }
+            }
+            EnemyAIState::Engaging => {
+                let distance_to_target = self
+                    .controller
+                    .feet_position()
+                    .distance(player.feet_position());
+                if distance_to_target > 1.0 && !self.attack_controller.is_attacking() {
+                    self.state = EnemyAIState::Idle;
                 }
             }
             _ => {}
@@ -372,44 +408,81 @@ impl Enemy {
 
         let mut desired_orientation = None;
 
-        match self.state {
-            EnemyAIState::Chasing(target_position) => {
-                if target_position.y < self.controller.feet_position().y - 0.02 {
-                    intention.up = true;
-                } else if target_position.y > self.controller.feet_position().y + 0.02 {
-                    intention.down = true;
-                }
-                if target_position.x < self.controller.feet_position().x - 0.02 {
-                    intention.left = true;
-                } else if target_position.x > self.controller.feet_position().x + 0.02 {
-                    intention.right = true;
-                }
-
-                let delta_x = target_position.x - self.controller.feet_position().x;
-                let delta_y = target_position.y - self.controller.feet_position().y;
-                if delta_x.abs() > delta_y.abs() {
-                    if delta_x < 0.0 {
-                        desired_orientation = Some(CharacterOrientation::Left);
-                    } else {
-                        desired_orientation = Some(CharacterOrientation::Right);
+        if !self.attack_controller.is_attacking() {
+            match self.state {
+                EnemyAIState::Chasing(target_position) => {
+                    if target_position.y < self.controller.feet_position().y - 0.02 {
+                        intention.up = true;
+                    } else if target_position.y > self.controller.feet_position().y + 0.02 {
+                        intention.down = true;
                     }
-                } else if delta_y < 0.0 {
-                    desired_orientation = Some(CharacterOrientation::Up);
-                } else {
-                    desired_orientation = Some(CharacterOrientation::Down);
+                    if target_position.x < self.controller.feet_position().x - 0.02 {
+                        intention.left = true;
+                    } else if target_position.x > self.controller.feet_position().x + 0.02 {
+                        intention.right = true;
+                    }
+
+                    let delta_x = target_position.x - self.controller.feet_position().x;
+                    let delta_y = target_position.y - self.controller.feet_position().y;
+                    if delta_x.abs() > delta_y.abs() {
+                        if delta_x < 0.0 {
+                            desired_orientation = Some(CharacterOrientation::Left);
+                        } else {
+                            desired_orientation = Some(CharacterOrientation::Right);
+                        }
+                    } else if delta_y < 0.0 {
+                        desired_orientation = Some(CharacterOrientation::Up);
+                    } else {
+                        desired_orientation = Some(CharacterOrientation::Down);
+                    }
                 }
-            }
-            EnemyAIState::Wandering(orientation) => {
-                match orientation {
-                    CharacterOrientation::Up => intention.up = true,
-                    CharacterOrientation::Down => intention.down = true,
-                    CharacterOrientation::Left => intention.left = true,
-                    CharacterOrientation::Right => intention.right = true,
+                EnemyAIState::Wandering(orientation) => {
+                    match orientation {
+                        CharacterOrientation::Up => intention.up = true,
+                        CharacterOrientation::Down => intention.down = true,
+                        CharacterOrientation::Left => intention.left = true,
+                        CharacterOrientation::Right => intention.right = true,
+                    }
+                    desired_orientation = Some(orientation);
                 }
-                desired_orientation = Some(orientation);
-            }
-            _ => {
-                // Stay idle, no action needed
+                EnemyAIState::Engaging => {
+                    // If the player is closer than 0.5 units, walk away from them
+                    info!(
+                        "Enemy engaging player at distance: {:?}",
+                        distance_to_player
+                    );
+
+                    let target_position = player.feet_position();
+                    if distance_to_player < 0.6 {
+                        if target_position.x < self.controller.feet_position().x {
+                            intention.right = true;
+                        } else {
+                            intention.left = true;
+                        }
+                        if target_position.y < self.controller.feet_position().y {
+                            intention.down = true;
+                        } else {
+                            intention.up = true;
+                        }
+                    }
+
+                    if intention.any() {
+                        let delta_x = target_position.x - self.controller.feet_position().x;
+                        let delta_y = target_position.y - self.controller.feet_position().y;
+                        if delta_x.abs() > delta_y.abs() {
+                            if delta_x < 0.0 {
+                                desired_orientation = Some(CharacterOrientation::Left);
+                            } else {
+                                desired_orientation = Some(CharacterOrientation::Right);
+                            }
+                        } else if delta_y < 0.0 {
+                            desired_orientation = Some(CharacterOrientation::Up);
+                        } else {
+                            desired_orientation = Some(CharacterOrientation::Down);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -420,6 +493,9 @@ impl Enemy {
         self.controller
             .update(&intention, delta_time, check_collision);
 
+        self.attack_controller
+            .update(delta_time, matches!(self.state, EnemyAIState::Engaging));
+
         match self.state {
             EnemyAIState::Chasing(_) | EnemyAIState::Wandering(_) => {
                 if last_position == self.controller.position {
@@ -427,10 +503,95 @@ impl Enemy {
                     info!("Enemy idle, no movement detected");
                 }
             }
-            _ => {
-                // Stay idle, no action needed
-            }
+            _ => {}
         };
+    }
+
+    pub fn get_attack_space(&self, base_transform: &Transform) -> Option<Transform> {
+        self.attack_controller.get_attack_space(
+            &self.controller,
+            base_transform,
+            self.animation.orientation,
+        )
+    }
+}
+
+enum AttackState {
+    Ready,
+    Attacking { duration_left: f32 },
+    Cooldown { duration_left: f32 },
+}
+
+struct AttackController {
+    state: AttackState,
+}
+
+impl AttackController {
+    pub fn new() -> Self {
+        Self {
+            state: AttackState::Ready,
+        }
+    }
+
+    pub fn update(&mut self, delta_time: f32, wants_to_attack: bool) {
+        match self.state {
+            AttackState::Ready => {
+                if wants_to_attack {
+                    self.state = AttackState::Attacking { duration_left: 0.2 };
+                }
+            }
+            AttackState::Attacking { duration_left } => {
+                if duration_left <= 0.0 {
+                    self.state = AttackState::Cooldown { duration_left: 1.0 };
+                } else {
+                    self.state = AttackState::Attacking {
+                        duration_left: duration_left - delta_time,
+                    };
+                }
+            }
+            AttackState::Cooldown { duration_left } => {
+                if duration_left <= 0.0 {
+                    self.state = AttackState::Ready;
+                } else {
+                    self.state = AttackState::Cooldown {
+                        duration_left: duration_left - delta_time,
+                    };
+                }
+            }
+        }
+    }
+
+    pub fn get_attack_space(
+        &self,
+        controller: &MovementController,
+        base_transform: &Transform,
+        orientation: CharacterOrientation,
+    ) -> Option<Transform> {
+        if let AttackState::Attacking { duration_left: _ } = self.state {
+            let local_space = controller.local_space(base_transform);
+
+            let degrees = match orientation {
+                CharacterOrientation::Up => f32::consts::PI * 0.0,
+                CharacterOrientation::Down => f32::consts::PI * 1.0,
+                CharacterOrientation::Left => f32::consts::PI * 1.5,
+                CharacterOrientation::Right => f32::consts::PI * 0.5,
+            };
+
+            Some(
+                local_space
+                    .translate(Vec3::new(0.5, 0.5, 0.0)) // Attack space is slightly above the center
+                    .rotate_2d(degrees)
+                    .scale(Vec3::new(1.0, 1.0, 1.0)) // Size of the attack space
+                    .translate(Vec3::new(0.0, 0.0, 0.0))
+                    .set_origin(&Transform::new().translate(Vec3::new(0.5, 1.0, 0.0))),
+            )
+        } else {
+            None
+        }
+    }
+
+    pub fn is_attacking(&self) -> bool {
+        matches!(self.state, AttackState::Attacking { .. })
     }
 }
 
@@ -438,6 +599,7 @@ struct Player {
     controller: MovementController,
     animation: CharacterWalkAnimation,
     direction_group_handle: KeyPressGroupHandle,
+    attack_controller: AttackController,
 }
 
 impl Player {
@@ -458,6 +620,7 @@ impl Player {
                 KeyCode::KeyA,
                 KeyCode::KeyD,
             ]),
+            attack_controller: AttackController::new(),
         }
     }
 
@@ -467,13 +630,14 @@ impl Player {
         delta_time: f32,
         check_collision: CollidesWithWorld,
     ) {
-        let movement_intention = MovementIntention::from_input(input);
+        let movement_intention = if !self.attack_controller.is_attacking() {
+            MovementIntention::from_input(input)
+        } else {
+            MovementIntention::idle()
+        };
 
-        self.controller.update(
-            &MovementIntention::from_input(input),
-            delta_time,
-            check_collision,
-        );
+        self.controller
+            .update(&movement_intention, delta_time, check_collision);
 
         // Simple logic
         let desired_orientation = if movement_intention.is_idle() {
@@ -489,6 +653,17 @@ impl Player {
         };
 
         self.animation.update(delta_time, desired_orientation);
+
+        let wants_to_attack = input.is_physical_key_down(KeyCode::KeyL);
+        self.attack_controller.update(delta_time, wants_to_attack);
+    }
+
+    pub fn get_attack_space(&self, base_transform: &Transform) -> Option<Transform> {
+        self.attack_controller.get_attack_space(
+            &self.controller,
+            base_transform,
+            self.animation.orientation,
+        )
     }
 }
 
@@ -502,6 +677,8 @@ pub struct Game {
     test_level: GameLevelSpec,
 
     enemy: Enemy,
+
+    attacking_enemy: bool,
 }
 
 impl Game {
@@ -561,6 +738,8 @@ impl Game {
                     [3, 4],
                 ),
             ),
+
+            attacking_enemy: false,
         }
     }
 
@@ -594,6 +773,16 @@ impl Game {
         //if frame == 1 && previous_frame != 1 {
         //    audio_system.play(&self.walk_audio, self.rng.random_range(0.8..1.2));
         //}
+
+        if let Some(attack_space) = self.player.get_attack_space(&level_origin) {
+            self.attacking_enemy = Collision::do_spaces_collide(
+                &attack_space,
+                &self.enemy.controller.collider(&level_origin),
+            )
+            .is_some();
+        } else {
+            self.attacking_enemy = false;
+        }
     }
 
     pub fn render(&self, drawer: &mut Drawer) {
@@ -635,6 +824,18 @@ impl Game {
             self.player.animation.get_current_sprite(),
         );
 
+        let white_sprite = drawer.white_sprite();
+
+        let color = if self.attacking_enemy {
+            EngineColor::RED
+        } else {
+            EngineColor::BLUE
+        };
+
+        if let Some(attack_space) = self.player.get_attack_space(&view_transform) {
+            drawer.draw_square_slow(Some(&attack_space), Some(&color), white_sprite);
+        }
+
         //let frame = frames[self.enemy.controller.walking_index as usize] as u32;
 
         let color = if let EnemyAIState::Chasing(_) = self.enemy.state {
@@ -648,5 +849,11 @@ impl Game {
             Some(&color),
             self.enemy.animation.get_current_sprite(),
         );
+
+        let white_sprite = drawer.white_sprite();
+
+        if let Some(attack_space) = self.enemy.get_attack_space(&view_transform) {
+            drawer.draw_square_slow(Some(&attack_space), Some(&EngineColor::GREEN), white_sprite);
+        }
     }
 }
