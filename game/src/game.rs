@@ -1023,12 +1023,6 @@ impl Game {
             }
         }
 
-        //let frame = frames[self.player.walking_index as usize] as u32;
-        //
-        //if frame == 1 && previous_frame != 1 {
-        //    audio_system.play(&self.walk_audio, self.rng.random_range(0.8..1.2));
-        //}
-
         if let Some((attack_space, windup_duration)) = self.player.get_attack_space(&level_origin) {
             self.attacking_enemy = Collision::do_spaces_collide(
                 &attack_space,
