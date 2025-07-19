@@ -64,6 +64,12 @@ impl EngineColor {
         b: 0.5,
         a: 1.0,
     };
+    pub const YELLOW: Self = Self {
+        r: 1.0,
+        g: 1.0,
+        b: 0.0,
+        a: 1.0,
+    };
 
     pub fn additive_darken(&self, factor: f32) -> Self {
         Self {

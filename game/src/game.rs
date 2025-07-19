@@ -318,21 +318,25 @@ struct Enemy {
     attack_controller: AttackController,
     health: f32,
     max_health: f32,
+    poise: f32,
+    max_poise: f32,
 }
 
 impl Enemy {
     pub fn new(position: Vec2, walking_sprite_sheet: GizmoSpriteSheet) -> Self {
         Self {
-            controller: MovementController::new(position, 1.0),
+            controller: MovementController::new(position, 1.5),
             state: EnemyAIState::Idle,
             animation: CharacterWalkAnimation::new(
                 walking_sprite_sheet,
                 CharacterOrientation::Down,
-                0.5, // Speed of the animation
+                0.75, // Speed of the animation
             ),
             attack_controller: AttackController::new(),
             health: 20.0,
             max_health: 20.0,
+            poise: 50.0,
+            max_poise: 50.0,
         }
     }
 
@@ -345,6 +349,9 @@ impl Enemy {
         rng: &mut StdRng,
     ) -> CharacterEvent {
         let mut event = CharacterEvent::None;
+
+        // Recover some poise
+        self.poise = (self.poise + delta_time * 5.0).min(self.max_poise);
 
         let distance_to_player = self
             .controller
@@ -567,14 +574,25 @@ impl Enemy {
         let local_space = self.controller.local_space(base_transform);
         local_space
             .translate(Vec3::new(0.5, 0.0, 0.0)) // Position above the enemy
-            .translate(Vec3::new(0.0, -0.1, 0.0)) // Position above the enemy
-            //.translate(Vec3::new(0.5, 0.5, 0.0)) // Position above the enemy
+            .translate(Vec3::new(0.0, -0.2, 0.0)) // Position above the enemy
             .scale(Vec3::new(0.8, 0.1, 1.0))
             .set_origin(&Transform::new().translate(Vec3::new(0.5, 0.5, 0.0)))
             .scale(Vec3::new(health_ratio, 1.0, 1.0)) // Scale based on health
-                                                      //.translate(Vec3::new(0.0, -0.1, 0.0)) // Position above the enemy
-                                                      //.set_origin(&Transform::new().translate(Vec3::new(0.0, 0.5, 0.0)))
-                                                      //.scale(Vec3::new(health_ratio, 1.0, 1.0)) // Scale based on health
+    }
+
+    pub fn poise_bar_space(&self, base_transform: &Transform, full: bool) -> Transform {
+        let poise_ratio = if !full {
+            self.poise / self.max_poise
+        } else {
+            1.0
+        };
+        let local_space = self.controller.local_space(base_transform);
+        local_space
+            .translate(Vec3::new(0.5, 0.0, 0.0)) // Position above the enemy
+            .translate(Vec3::new(0.0, -0.1, 0.0)) // Position above the enemy
+            .scale(Vec3::new(0.8, 0.1, 1.0))
+            .set_origin(&Transform::new().translate(Vec3::new(0.5, 0.5, 0.0)))
+            .scale(Vec3::new(poise_ratio, 1.0, 1.0)) // Scale based on poise
     }
 }
 
@@ -588,6 +606,9 @@ enum AttackState {
         windup_duration: f32,
     },
     Cooldown {
+        duration_left: f32,
+    },
+    Staggered {
         duration_left: f32,
     },
 }
@@ -630,11 +651,14 @@ impl AttackController {
                 }
             }
             AttackState::Windup { current_time } => {
-                let wants_to_finish_windup = match attack_intention {
+                let mut wants_to_finish_windup = match attack_intention {
                     AttackIntention::None => true,
                     AttackIntention::Perpetual => false,
                     AttackIntention::Duration(duration) => current_time + delta_time >= duration,
                 };
+                if current_time < 0.2 {
+                    wants_to_finish_windup = false; // Windup lasts 0.2 seconds
+                }
                 if !wants_to_finish_windup {
                     self.state = AttackState::Windup {
                         current_time: current_time + delta_time,
@@ -665,6 +689,15 @@ impl AttackController {
                     self.state = AttackState::Ready;
                 } else {
                     self.state = AttackState::Cooldown {
+                        duration_left: duration_left - delta_time,
+                    };
+                }
+            }
+            AttackState::Staggered { duration_left } => {
+                if duration_left <= 0.0 {
+                    self.state = AttackState::Ready;
+                } else {
+                    self.state = AttackState::Staggered {
                         duration_left: duration_left - delta_time,
                     };
                 }
@@ -710,6 +743,20 @@ impl AttackController {
     pub fn is_ready(&self) -> bool {
         matches!(self.state, AttackState::Ready)
     }
+
+    pub fn make_staggered(&mut self, duration: f32) -> bool {
+        if let AttackState::Staggered { duration_left } = self.state {
+            self.state = AttackState::Staggered {
+                duration_left: duration.max(duration_left),
+            };
+            false
+        } else {
+            self.state = AttackState::Staggered {
+                duration_left: duration,
+            };
+            true
+        }
+    }
 }
 
 struct Player {
@@ -718,6 +765,7 @@ struct Player {
     direction_group_handle: KeyPressGroupHandle,
     attack_controller: AttackController,
     health: f32,
+    poise: f32,
 }
 
 enum CharacterEvent {
@@ -747,6 +795,7 @@ impl Player {
             ]),
             attack_controller: AttackController::new(),
             health: 100.0, // Default health
+            poise: 50.0,
         }
     }
 
@@ -757,6 +806,9 @@ impl Player {
         check_collision: CollidesWithWorld,
     ) -> CharacterEvent {
         let mut event = CharacterEvent::None;
+
+        // Recover some poise
+        self.poise = (self.poise + delta_time * 5.0).min(50.0);
 
         let movement_intention = if self.attack_controller.is_ready() {
             MovementIntention::from_input(input)
@@ -822,6 +874,8 @@ pub struct Game {
 
     windup_audio: AudioHandle,
     attack_audio: AudioHandle,
+    staggered_audio: AudioHandle,
+    stance_broken_audio: AudioHandle,
 }
 
 impl Game {
@@ -880,6 +934,9 @@ impl Game {
 
             windup_audio: audio_system.load_buffer(include_bytes!("assets/windup_2.wav")),
             attack_audio: audio_system.load_buffer(include_bytes!("assets/attack_1.wav")),
+            staggered_audio: audio_system.load_buffer(include_bytes!("assets/staggered_1.wav")),
+            stance_broken_audio: audio_system
+                .load_buffer(include_bytes!("assets/stance_broken_1.wav")),
         }
     }
 
@@ -943,7 +1000,21 @@ impl Game {
                 )
                 .is_some()
                 {
-                    self.player.health -= 50.0 * delta_time * windup_duration; // Deal damage to the player
+                    self.player.health -= 400.0 * delta_time * windup_duration; // Deal damage to the player
+                    self.player.poise -= 400.0 * delta_time * windup_duration; // Deal poise damage to the player
+                    if self
+                        .player
+                        .attack_controller
+                        .make_staggered(windup_duration)
+                    {
+                        audio_system.play(&self.staggered_audio, self.rng.random_range(0.8..1.2));
+                    }
+                    if self.player.poise <= 0.0 {
+                        self.player.poise = 50.0; // Prevent negative poise
+                        self.player.attack_controller.make_staggered(1.0);
+                        audio_system
+                            .play(&self.stance_broken_audio, self.rng.random_range(0.8..1.2));
+                    }
                     if self.player.health <= 0.0 {
                         self.player.health = 0.0; // Prevent negative health
                         info!("Player defeated!");
@@ -965,7 +1036,20 @@ impl Game {
             )
             .is_some();
             if self.attacking_enemy {
-                self.enemy.health -= 10.0 * delta_time * windup_duration; // Deal damage to the enemy
+                self.enemy.health -= 20.0 * delta_time * windup_duration; // Deal damage to the enemy
+                self.enemy.poise -= 200.0 * delta_time * windup_duration; // Deal poise damage to the enemy
+                if self
+                    .enemy
+                    .attack_controller
+                    .make_staggered(windup_duration * 0.25)
+                {
+                    audio_system.play(&self.staggered_audio, self.rng.random_range(0.6..1.0));
+                }
+                if self.enemy.poise <= 0.0 {
+                    self.enemy.poise = 50.0; // Prevent negative poise
+                    self.enemy.attack_controller.make_staggered(1.0);
+                    audio_system.play(&self.stance_broken_audio, self.rng.random_range(0.6..1.0));
+                }
                 if self.enemy.health <= 0.0 {
                     self.enemy.health = 0.0; // Prevent negative health
                     info!("Enemy defeated!");
@@ -1065,6 +1149,18 @@ impl Game {
                 Some(&EngineColor::RED),
                 white_sprite,
             );
+
+            // Draw enemy poise bar
+            drawer.draw_square_slow(
+                Some(&self.enemy.poise_bar_space(&view_transform, true)),
+                Some(&EngineColor::YELLOW.additive_darken(0.7)),
+                white_sprite,
+            );
+            drawer.draw_square_slow(
+                Some(&self.enemy.poise_bar_space(&view_transform, false)),
+                Some(&EngineColor::YELLOW),
+                white_sprite,
+            );
         }
 
         // Draw player health
@@ -1087,6 +1183,26 @@ impl Game {
                     .scale(Vec3::new(self.player.health, 16.0, 1.0)),
             ),
             Some(&EngineColor::RED),
+            white_sprite,
+        );
+
+        // Draw player poise
+        drawer.draw_square_slow(
+            Some(
+                &ui_transform
+                    .translate(Vec3::new(16.0, 32.0, 0.0))
+                    .scale(Vec3::new(100.0, 16.0, 1.0)),
+            ),
+            Some(&EngineColor::YELLOW.additive_darken(0.7)),
+            white_sprite,
+        );
+        drawer.draw_square_slow(
+            Some(
+                &ui_transform
+                    .translate(Vec3::new(16.0, 32.0, 0.0))
+                    .scale(Vec3::new(self.player.poise * 2.0, 16.0, 1.0)),
+            ),
+            Some(&EngineColor::YELLOW),
             white_sprite,
         );
     }
