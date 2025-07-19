@@ -245,26 +245,39 @@ struct CharacterWalkAnimation {
     current_frame: usize,
     frame_duration: f32,
     elapsed_time: f32,
+    speed: f32, // Speed of the animation
+}
+
+enum AnimationEvent {
+    FrameChanged(usize),
+    None,
 }
 
 impl CharacterWalkAnimation {
-    pub fn new(sheet: GizmoSpriteSheet, orientation: CharacterOrientation) -> Self {
+    pub fn new(sheet: GizmoSpriteSheet, orientation: CharacterOrientation, speed: f32) -> Self {
         Self {
             sheet,
             orientation,
             current_frame: 0,
             frame_duration: 0.2, // Duration for each frame
             elapsed_time: 0.0,
+            speed, // Speed of the animation
         }
     }
 
-    pub fn update(&mut self, delta_time: f32, orientation: Option<CharacterOrientation>) {
+    pub fn update(
+        &mut self,
+        delta_time: f32,
+        orientation: Option<CharacterOrientation>,
+    ) -> AnimationEvent {
+        let mut event = AnimationEvent::None;
         match orientation {
             Some(new_orientation) => {
                 self.orientation = new_orientation;
-                self.elapsed_time += delta_time;
+                self.elapsed_time += delta_time * self.speed; // Adjust elapsed time by speed factor
                 if self.elapsed_time >= self.frame_duration {
                     self.current_frame = (self.current_frame + 1) % 4; // Cycle through 4 frames
+                    event = AnimationEvent::FrameChanged(self.current_frame);
                     self.elapsed_time = 0.0;
                 }
             }
@@ -273,6 +286,7 @@ impl CharacterWalkAnimation {
                 self.elapsed_time = 0.0;
             }
         }
+        event
     }
 
     pub fn get_current_sprite(&self) -> GizmoSprite {
@@ -314,6 +328,7 @@ impl Enemy {
             animation: CharacterWalkAnimation::new(
                 walking_sprite_sheet,
                 CharacterOrientation::Down,
+                0.5, // Speed of the animation
             ),
             attack_controller: AttackController::new(),
             health: 20.0,
@@ -328,7 +343,9 @@ impl Enemy {
         player: &MovementController,
         level: &GameLevelSpec,
         rng: &mut StdRng,
-    ) {
+    ) -> CharacterEvent {
+        let mut event = CharacterEvent::None;
+
         let distance_to_player = self
             .controller
             .feet_position()
@@ -396,7 +413,7 @@ impl Enemy {
                     .controller
                     .feet_position()
                     .distance(player.feet_position());
-                if distance_to_target > 1.0 && !self.attack_controller.is_attacking() {
+                if distance_to_target > 1.0 && self.attack_controller.is_ready() {
                     self.state = EnemyAIState::Idle;
                 }
             }
@@ -412,7 +429,7 @@ impl Enemy {
 
         let mut desired_orientation = None;
 
-        if !self.attack_controller.is_attacking() {
+        if self.attack_controller.is_ready() {
             match self.state {
                 EnemyAIState::Chasing(target_position) => {
                     if target_position.y < self.controller.feet_position().y - 0.02 {
@@ -490,15 +507,29 @@ impl Enemy {
             }
         }
 
-        self.animation.update(delta_time, desired_orientation);
+        let animation_event = self.animation.update(delta_time, desired_orientation);
+        if let AnimationEvent::FrameChanged(frame) = animation_event {
+            if frame == 0 || frame == 2 {
+                event = CharacterEvent::WalkCycle; // Trigger walk cycle event
+            }
+        };
 
         let last_position = self.controller.position;
 
         self.controller
             .update(&intention, delta_time, check_collision);
 
-        self.attack_controller
-            .update(delta_time, matches!(self.state, EnemyAIState::Engaging));
+        let attack_controller_event = self.attack_controller.update(
+            delta_time,
+            if matches!(self.state, EnemyAIState::Engaging) {
+                AttackIntention::Duration(0.2)
+            } else {
+                AttackIntention::None
+            },
+        );
+        if !matches!(attack_controller_event, AttackControllerEvent::None) {
+            event = CharacterEvent::AttackControllerEvent(attack_controller_event);
+        }
 
         match self.state {
             EnemyAIState::Chasing(_) | EnemyAIState::Wandering(_) => {
@@ -507,11 +538,19 @@ impl Enemy {
                     info!("Enemy idle, no movement detected");
                 }
             }
+            EnemyAIState::Engaging => {
+                if self.attack_controller.is_ready() {
+                    self.state = EnemyAIState::Idle; // If we are ready to attack, go back to idle
+                    info!("Enemy idle, ready to attack");
+                }
+            }
             _ => {}
         };
+
+        event
     }
 
-    pub fn get_attack_space(&self, base_transform: &Transform) -> Option<Transform> {
+    pub fn get_attack_space(&self, base_transform: &Transform) -> Option<(Transform, f32)> {
         self.attack_controller.get_attack_space(
             &self.controller,
             base_transform,
@@ -541,12 +580,32 @@ impl Enemy {
 
 enum AttackState {
     Ready,
-    Attacking { duration_left: f32 },
-    Cooldown { duration_left: f32 },
+    Windup {
+        current_time: f32,
+    },
+    Attacking {
+        duration_left: f32,
+        windup_duration: f32,
+    },
+    Cooldown {
+        duration_left: f32,
+    },
+}
+
+enum AttackIntention {
+    None,
+    Perpetual,
+    Duration(f32),
 }
 
 struct AttackController {
     state: AttackState,
+}
+
+enum AttackControllerEvent {
+    StartWindup,
+    StartAttack,
+    None,
 }
 
 impl AttackController {
@@ -556,19 +615,48 @@ impl AttackController {
         }
     }
 
-    pub fn update(&mut self, delta_time: f32, wants_to_attack: bool) {
+    pub fn update(
+        &mut self,
+        delta_time: f32,
+        attack_intention: AttackIntention,
+    ) -> AttackControllerEvent {
+        let mut event = AttackControllerEvent::None;
         match self.state {
             AttackState::Ready => {
-                if wants_to_attack {
-                    self.state = AttackState::Attacking { duration_left: 0.2 };
+                if !matches!(attack_intention, AttackIntention::None) {
+                    //self.state = AttackState::Attacking { duration_left: 0.2 };
+                    self.state = AttackState::Windup { current_time: 0.0 };
+                    event = AttackControllerEvent::StartWindup;
                 }
             }
-            AttackState::Attacking { duration_left } => {
+            AttackState::Windup { current_time } => {
+                let wants_to_finish_windup = match attack_intention {
+                    AttackIntention::None => true,
+                    AttackIntention::Perpetual => false,
+                    AttackIntention::Duration(duration) => current_time + delta_time >= duration,
+                };
+                if !wants_to_finish_windup {
+                    self.state = AttackState::Windup {
+                        current_time: current_time + delta_time,
+                    };
+                } else {
+                    self.state = AttackState::Attacking {
+                        duration_left: 0.2,
+                        windup_duration: current_time,
+                    };
+                    event = AttackControllerEvent::StartAttack;
+                }
+            }
+            AttackState::Attacking {
+                duration_left,
+                windup_duration,
+            } => {
                 if duration_left <= 0.0 {
-                    self.state = AttackState::Cooldown { duration_left: 1.0 };
+                    self.state = AttackState::Cooldown { duration_left: 0.1 };
                 } else {
                     self.state = AttackState::Attacking {
                         duration_left: duration_left - delta_time,
+                        windup_duration,
                     };
                 }
             }
@@ -582,6 +670,7 @@ impl AttackController {
                 }
             }
         }
+        event
     }
 
     pub fn get_attack_space(
@@ -589,8 +678,12 @@ impl AttackController {
         controller: &MovementController,
         base_transform: &Transform,
         orientation: CharacterOrientation,
-    ) -> Option<Transform> {
-        if let AttackState::Attacking { duration_left: _ } = self.state {
+    ) -> Option<(Transform, f32)> {
+        if let AttackState::Attacking {
+            duration_left: _,
+            windup_duration,
+        } = self.state
+        {
             let local_space = controller.local_space(base_transform);
 
             let degrees = match orientation {
@@ -600,21 +693,22 @@ impl AttackController {
                 CharacterOrientation::Right => f32::consts::PI * 0.5,
             };
 
-            Some(
+            Some((
                 local_space
                     .translate(Vec3::new(0.5, 0.5, 0.0)) // Attack space is slightly above the center
                     .rotate_2d(degrees)
                     .scale(Vec3::new(1.0, 1.0, 1.0)) // Size of the attack space
                     .translate(Vec3::new(0.0, 0.0, 0.0))
                     .set_origin(&Transform::new().translate(Vec3::new(0.5, 1.0, 0.0))),
-            )
+                windup_duration,
+            ))
         } else {
             None
         }
     }
 
-    pub fn is_attacking(&self) -> bool {
-        matches!(self.state, AttackState::Attacking { .. })
+    pub fn is_ready(&self) -> bool {
+        matches!(self.state, AttackState::Ready)
     }
 }
 
@@ -624,6 +718,12 @@ struct Player {
     direction_group_handle: KeyPressGroupHandle,
     attack_controller: AttackController,
     health: f32,
+}
+
+enum CharacterEvent {
+    None,
+    AttackControllerEvent(AttackControllerEvent),
+    WalkCycle,
 }
 
 impl Player {
@@ -637,6 +737,7 @@ impl Player {
             animation: CharacterWalkAnimation::new(
                 walking_sprite_sheet,
                 CharacterOrientation::Down,
+                1.0, // Speed of the animation
             ),
             direction_group_handle: input_config.allocate_group(&[
                 KeyCode::KeyW,
@@ -654,8 +755,10 @@ impl Player {
         input: &InputSystem,
         delta_time: f32,
         check_collision: CollidesWithWorld,
-    ) {
-        let movement_intention = if !self.attack_controller.is_attacking() {
+    ) -> CharacterEvent {
+        let mut event = CharacterEvent::None;
+
+        let movement_intention = if self.attack_controller.is_ready() {
             MovementIntention::from_input(input)
         } else {
             MovementIntention::idle()
@@ -677,13 +780,29 @@ impl Player {
             }
         };
 
-        self.animation.update(delta_time, desired_orientation);
+        let animation_event = self.animation.update(delta_time, desired_orientation);
+        if let AnimationEvent::FrameChanged(frame) = animation_event {
+            if frame == 0 || frame == 2 {
+                event = CharacterEvent::WalkCycle;
+            }
+        }
 
         let wants_to_attack = input.is_physical_key_down(KeyCode::KeyL);
-        self.attack_controller.update(delta_time, wants_to_attack);
+        let attack_event = self.attack_controller.update(
+            delta_time,
+            if wants_to_attack {
+                AttackIntention::Perpetual
+            } else {
+                AttackIntention::None
+            },
+        );
+        if !matches!(attack_event, AttackControllerEvent::None) {
+            event = CharacterEvent::AttackControllerEvent(attack_event);
+        }
+        event
     }
 
-    pub fn get_attack_space(&self, base_transform: &Transform) -> Option<Transform> {
+    pub fn get_attack_space(&self, base_transform: &Transform) -> Option<(Transform, f32)> {
         self.attack_controller.get_attack_space(
             &self.controller,
             base_transform,
@@ -700,6 +819,9 @@ pub struct Game {
     test_level: GameLevelSpec,
     enemy: Enemy,
     attacking_enemy: bool,
+
+    windup_audio: AudioHandle,
+    attack_audio: AudioHandle,
 }
 
 impl Game {
@@ -755,25 +877,40 @@ impl Game {
             ),
 
             attacking_enemy: false,
+
+            windup_audio: audio_system.load_buffer(include_bytes!("assets/windup_2.wav")),
+            attack_audio: audio_system.load_buffer(include_bytes!("assets/attack_1.wav")),
         }
     }
 
     pub fn update(&mut self, input: &InputSystem, audio_system: &mut AudioSystem, delta_time: f32) {
-        let frames = [0, 1, 2, 1];
-
-        //let previous_frame = frames[self.player.walking_index as usize] as u32;
-
         let level_origin =
             Transform::new().set_origin(&Transform::new().translate(Vec3::new(8.0, 8.0, 0.0)));
 
         if self.player.health > 0.0 {
-            self.player.update(input, delta_time, |player_space| {
+            let player_event = self.player.update(input, delta_time, |player_space| {
                 self.test_level.collides_with(&level_origin, player_space)
             });
+
+            match player_event {
+                CharacterEvent::None => {}
+                CharacterEvent::AttackControllerEvent(attack_event) => match attack_event {
+                    AttackControllerEvent::StartWindup => {
+                        audio_system.play(&self.windup_audio, self.rng.random_range(0.8..1.2));
+                    }
+                    AttackControllerEvent::StartAttack => {
+                        audio_system.play(&self.attack_audio, self.rng.random_range(0.8..1.2));
+                    }
+                    AttackControllerEvent::None => {}
+                },
+                CharacterEvent::WalkCycle => {
+                    audio_system.play(&self.walk_audio, self.rng.random_range(0.8..1.2));
+                }
+            }
         }
 
         if self.enemy.health > 0.0 {
-            self.enemy.update(
+            let enemy_event = self.enemy.update(
                 delta_time,
                 |enemy_space| self.test_level.collides_with(&level_origin, enemy_space),
                 &self.player.controller,
@@ -781,14 +918,32 @@ impl Game {
                 &mut self.rng,
             );
 
-            if let Some(attack_space) = self.enemy.get_attack_space(&level_origin) {
+            match enemy_event {
+                CharacterEvent::None => {}
+                CharacterEvent::AttackControllerEvent(attack_event) => match attack_event {
+                    AttackControllerEvent::StartWindup => {
+                        audio_system.play(&self.windup_audio, self.rng.random_range(0.6..1.0));
+                    }
+                    AttackControllerEvent::StartAttack => {
+                        audio_system.play(&self.attack_audio, self.rng.random_range(0.6..1.0));
+                    }
+                    AttackControllerEvent::None => {}
+                },
+                CharacterEvent::WalkCycle => {
+                    audio_system.play(&self.walk_audio, self.rng.random_range(0.6..1.0));
+                }
+            }
+
+            if let Some((attack_space, windup_duration)) =
+                self.enemy.get_attack_space(&level_origin)
+            {
                 if Collision::do_spaces_collide(
                     &attack_space,
                     &self.player.controller.collider(&level_origin),
                 )
                 .is_some()
                 {
-                    self.player.health -= 50.0 * delta_time; // Deal damage to the player
+                    self.player.health -= 50.0 * delta_time * windup_duration; // Deal damage to the player
                     if self.player.health <= 0.0 {
                         self.player.health = 0.0; // Prevent negative health
                         info!("Player defeated!");
@@ -803,14 +958,14 @@ impl Game {
         //    audio_system.play(&self.walk_audio, self.rng.random_range(0.8..1.2));
         //}
 
-        if let Some(attack_space) = self.player.get_attack_space(&level_origin) {
+        if let Some((attack_space, windup_duration)) = self.player.get_attack_space(&level_origin) {
             self.attacking_enemy = Collision::do_spaces_collide(
                 &attack_space,
                 &self.enemy.controller.collider(&level_origin),
             )
             .is_some();
             if self.attacking_enemy {
-                self.enemy.health -= 10.0 * delta_time; // Deal damage to the enemy
+                self.enemy.health -= 10.0 * delta_time * windup_duration; // Deal damage to the enemy
                 if self.enemy.health <= 0.0 {
                     self.enemy.health = 0.0; // Prevent negative health
                     info!("Enemy defeated!");
@@ -870,7 +1025,7 @@ impl Game {
             EngineColor::BLUE
         };
 
-        if let Some(attack_space) = self.player.get_attack_space(&view_transform) {
+        if let Some((attack_space, _)) = self.player.get_attack_space(&view_transform) {
             drawer.draw_square_slow(Some(&attack_space), Some(&color), white_sprite);
         }
 
@@ -891,7 +1046,7 @@ impl Game {
 
             let white_sprite = drawer.white_sprite();
 
-            if let Some(attack_space) = self.enemy.get_attack_space(&view_transform) {
+            if let Some((attack_space, _)) = self.enemy.get_attack_space(&view_transform) {
                 drawer.draw_square_slow(
                     Some(&attack_space),
                     Some(&EngineColor::GREEN),
