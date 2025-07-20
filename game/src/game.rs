@@ -1,9 +1,10 @@
 use core::f32;
+use std::{collections::HashMap, rc::Rc};
 
 use glam::{Vec2, Vec3};
 use glyphon::cosmic_text::ttf_parser::math;
 use log::info;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, seq::IndexedRandom, Rng, SeedableRng};
 use wgpu::Color;
 use winit::keyboard::KeyCode;
 
@@ -863,19 +864,71 @@ impl Player {
     }
 }
 
+struct ActiveRoom {
+    spec: Rc<GameLevelSpec>,
+    enemies: Vec<Enemy>,
+}
+
+impl ActiveRoom {
+    pub fn from_spec(spec: Rc<GameLevelSpec>) -> Self {
+        let enemies = vec![];
+        Self { spec, enemies }
+    }
+}
+
+struct RoomManager {
+    room_pool: Vec<Rc<GameLevelSpec>>,
+    rooms: HashMap<(i32, i32, i32), ActiveRoom>,
+    current_room: (i32, i32, i32),
+    rng: StdRng,
+}
+
+impl RoomManager {
+    pub fn new(spawn_spec: GameLevelSpec) -> Self {
+        let mut rooms = HashMap::new();
+        rooms.insert((0, 0, 0), ActiveRoom::from_spec(Rc::new(spawn_spec)));
+        Self {
+            room_pool: Vec::new(),
+            rooms,
+            current_room: (0, 0, 0),         // Starting room
+            rng: StdRng::from_seed([0; 32]), // Seed with zeros for reproducibility
+        }
+    }
+
+    pub fn get_current_room(&self) -> &ActiveRoom {
+        self.rooms
+            .get(&self.current_room)
+            .expect("Current room not found")
+    }
+
+    pub fn change_room(&mut self, position: (i32, i32, i32)) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.rooms.entry(position) {
+            let new_room_spec = self
+                .room_pool
+                .choose(&mut self.rng)
+                .expect("No room available for spawning");
+
+            let new_room = ActiveRoom::from_spec(new_room_spec.clone());
+            e.insert(new_room);
+            self.current_room = position; // Update current room to the newly created one
+        } else {
+            self.current_room = position;
+        }
+    }
+}
+
 pub struct Game {
     player: Player,
     camera: OrthoCamera,
     walk_audio: AudioHandle,
     rng: StdRng,
-    test_level: GameLevelSpec,
-    enemy: Enemy,
-    attacking_enemy: bool,
 
     windup_audio: AudioHandle,
     attack_audio: AudioHandle,
     staggered_audio: AudioHandle,
     stance_broken_audio: AudioHandle,
+
+    manager: RoomManager,
 }
 
 impl Game {
@@ -895,7 +948,7 @@ impl Game {
         let rng = StdRng::from_seed([0; 32]); // Seed with zeros for reproducibility
         Self {
             player: Player::new(
-                Vec2::new(1.0, 1.0),
+                Vec2::new(8.0, 8.0),
                 rendering_system.gizmo_sprite_sheet_from_encoded_image(
                     include_bytes!("assets/char_template.png"),
                     [0.0, 0.0],
@@ -910,43 +963,38 @@ impl Game {
             },
             walk_audio: audio_system.load_buffer(include_bytes!("assets/walk.wav")),
             rng: StdRng::from_seed([0; 32]), // Seed with zeros for reproducibility
-            test_level: GameLevelSpec::load(
-                GameLevelLoadData {
-                    background_bytes: include_bytes!("assets/level_generated/floor.png"),
-                    decoration_bytes: include_bytes!("assets/level_generated/test_with_walls.png"),
-                    collision_csv: include_str!("assets/level_generated/collision.csv"),
-                },
-                rendering_system,
-            )
-            .expect("Failed to load game level"),
-
-            enemy: Enemy::new(
-                Vec2::new(2.0, -2.0),
-                rendering_system.gizmo_sprite_sheet_from_encoded_image(
-                    include_bytes!("assets/char_template.png"),
-                    [0.0, 0.0],
-                    [1.0, 1.0],
-                    [3, 4],
-                ),
-            ),
-
-            attacking_enemy: false,
-
             windup_audio: audio_system.load_buffer(include_bytes!("assets/windup_2.wav")),
             attack_audio: audio_system.load_buffer(include_bytes!("assets/attack_1.wav")),
             staggered_audio: audio_system.load_buffer(include_bytes!("assets/staggered_1.wav")),
             stance_broken_audio: audio_system
                 .load_buffer(include_bytes!("assets/stance_broken_1.wav")),
+
+            manager: RoomManager::new(
+                GameLevelSpec::load(
+                    GameLevelLoadData {
+                        background_bytes: include_bytes!("assets/level_generated/spawn_floor.png"),
+                        decoration_bytes: include_bytes!(
+                            "assets/level_generated/spawn_with_walls.png"
+                        ),
+                        collision_csv: include_str!("assets/level_generated/spawn_collision.csv"),
+                    },
+                    rendering_system,
+                )
+                .expect("Failed to load spawn level"),
+            ),
         }
     }
 
     pub fn update(&mut self, input: &InputSystem, audio_system: &mut AudioSystem, delta_time: f32) {
         let level_origin =
-            Transform::new().set_origin(&Transform::new().translate(Vec3::new(8.0, 8.0, 0.0)));
+            Transform::new().set_origin(&Transform::new().translate(Vec3::new(0.0, 0.0, 0.0)));
 
         if self.player.health > 0.0 {
             let player_event = self.player.update(input, delta_time, |player_space| {
-                self.test_level.collides_with(&level_origin, player_space)
+                self.manager
+                    .get_current_room()
+                    .spec
+                    .collides_with(&level_origin, player_space)
             });
 
             match player_event {
@@ -965,100 +1013,13 @@ impl Game {
                 }
             }
         }
-
-        if self.enemy.health > 0.0 {
-            let enemy_event = self.enemy.update(
-                delta_time,
-                |enemy_space| self.test_level.collides_with(&level_origin, enemy_space),
-                &self.player.controller,
-                &self.test_level,
-                &mut self.rng,
-            );
-
-            match enemy_event {
-                CharacterEvent::None => {}
-                CharacterEvent::AttackControllerEvent(attack_event) => match attack_event {
-                    AttackControllerEvent::StartWindup => {
-                        audio_system.play(&self.windup_audio, self.rng.random_range(0.6..1.0));
-                    }
-                    AttackControllerEvent::StartAttack => {
-                        audio_system.play(&self.attack_audio, self.rng.random_range(0.6..1.0));
-                    }
-                    AttackControllerEvent::None => {}
-                },
-                CharacterEvent::WalkCycle => {
-                    audio_system.play(&self.walk_audio, self.rng.random_range(0.6..1.0));
-                }
-            }
-
-            if let Some((attack_space, windup_duration)) =
-                self.enemy.get_attack_space(&level_origin)
-            {
-                if Collision::do_spaces_collide(
-                    &attack_space,
-                    &self.player.controller.collider(&level_origin),
-                )
-                .is_some()
-                {
-                    self.player.health -= 400.0 * delta_time * windup_duration; // Deal damage to the player
-                    self.player.poise -= 400.0 * delta_time * windup_duration; // Deal poise damage to the player
-                    if self
-                        .player
-                        .attack_controller
-                        .make_staggered(windup_duration)
-                    {
-                        audio_system.play(&self.staggered_audio, self.rng.random_range(0.8..1.2));
-                    }
-                    if self.player.poise <= 0.0 {
-                        self.player.poise = 50.0; // Prevent negative poise
-                        self.player.attack_controller.make_staggered(1.0);
-                        audio_system
-                            .play(&self.stance_broken_audio, self.rng.random_range(0.8..1.2));
-                    }
-                    if self.player.health <= 0.0 {
-                        self.player.health = 0.0; // Prevent negative health
-                        info!("Player defeated!");
-                    }
-                }
-            }
-        }
-
-        if let Some((attack_space, windup_duration)) = self.player.get_attack_space(&level_origin) {
-            self.attacking_enemy = Collision::do_spaces_collide(
-                &attack_space,
-                &self.enemy.controller.collider(&level_origin),
-            )
-            .is_some();
-            if self.attacking_enemy {
-                self.enemy.health -= 20.0 * delta_time * windup_duration; // Deal damage to the enemy
-                self.enemy.poise -= 200.0 * delta_time * windup_duration; // Deal poise damage to the enemy
-                if self
-                    .enemy
-                    .attack_controller
-                    .make_staggered(windup_duration * 0.25)
-                {
-                    audio_system.play(&self.staggered_audio, self.rng.random_range(0.6..1.0));
-                }
-                if self.enemy.poise <= 0.0 {
-                    self.enemy.poise = 50.0; // Prevent negative poise
-                    self.enemy.attack_controller.make_staggered(1.0);
-                    audio_system.play(&self.stance_broken_audio, self.rng.random_range(0.6..1.0));
-                }
-                if self.enemy.health <= 0.0 {
-                    self.enemy.health = 0.0; // Prevent negative health
-                    info!("Enemy defeated!");
-                }
-            }
-        } else {
-            self.attacking_enemy = false;
-        }
     }
 
     pub fn render(&self, drawer: &mut Drawer) {
         drawer.clear_slow(Color {
-            r: 0.001,
-            g: 0.001,
-            b: 0.001,
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
             a: 255.0,
         });
 
@@ -1069,19 +1030,19 @@ impl Game {
                 .local_space(&Transform::new().translate(Vec3::new(0.5, 0.5, 0.0))),
         );
 
-        // Draw level
-        let level_transform = self.test_level.get_local_space(
-            &view_transform.set_origin(&Transform::new().translate(Vec3::new(8.0, 8.0, 0.0))),
+        let current_level = self.manager.get_current_room();
+        let level_transform = current_level.spec.get_local_space(
+            &view_transform.set_origin(&Transform::new().translate(Vec3::new(0.0, 0.0, 0.0))),
         );
         drawer.draw_square_slow(
             Some(&level_transform),
             Some(&EngineColor::WHITE),
-            self.test_level.background.get_sprite([0, 0]).unwrap(),
+            current_level.spec.background.get_sprite([0, 0]).unwrap(),
         );
         drawer.draw_square_slow(
             Some(&level_transform),
             Some(&EngineColor::WHITE),
-            self.test_level.decoration.get_sprite([0, 0]).unwrap(),
+            current_level.spec.decoration.get_sprite([0, 0]).unwrap(),
         );
 
         let color = if self.player.health > 0.0 {
@@ -1097,64 +1058,8 @@ impl Game {
 
         let white_sprite = drawer.white_sprite();
 
-        let color = if self.attacking_enemy {
-            EngineColor::RED
-        } else {
-            EngineColor::BLUE
-        };
-
         if let Some((attack_space, _)) = self.player.get_attack_space(&view_transform) {
-            drawer.draw_square_slow(Some(&attack_space), Some(&color), white_sprite);
-        }
-
-        //let frame = frames[self.enemy.controller.walking_index as usize] as u32;
-
-        if self.enemy.health > 0.0 {
-            let color = if let EnemyAIState::Chasing(_) = self.enemy.state {
-                EngineColor::RED
-            } else {
-                EngineColor::BLUE
-            };
-
-            drawer.draw_square_slow(
-                Some(&self.enemy.controller.local_space(&view_transform)),
-                Some(&color),
-                self.enemy.animation.get_current_sprite(),
-            );
-
-            let white_sprite = drawer.white_sprite();
-
-            if let Some((attack_space, _)) = self.enemy.get_attack_space(&view_transform) {
-                drawer.draw_square_slow(
-                    Some(&attack_space),
-                    Some(&EngineColor::GREEN),
-                    white_sprite,
-                );
-            }
-
-            // Draw enemy health bar
-            drawer.draw_square_slow(
-                Some(&self.enemy.health_bar_space(&view_transform, true)),
-                Some(&EngineColor::RED.additive_darken(0.7)),
-                white_sprite,
-            );
-            drawer.draw_square_slow(
-                Some(&self.enemy.health_bar_space(&view_transform, false)),
-                Some(&EngineColor::RED),
-                white_sprite,
-            );
-
-            // Draw enemy poise bar
-            drawer.draw_square_slow(
-                Some(&self.enemy.poise_bar_space(&view_transform, true)),
-                Some(&EngineColor::YELLOW.additive_darken(0.7)),
-                white_sprite,
-            );
-            drawer.draw_square_slow(
-                Some(&self.enemy.poise_bar_space(&view_transform, false)),
-                Some(&EngineColor::YELLOW),
-                white_sprite,
-            );
+            drawer.draw_square_slow(Some(&attack_space), Some(&EngineColor::GREEN), white_sprite);
         }
 
         // Draw player health

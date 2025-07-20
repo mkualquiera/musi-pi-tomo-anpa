@@ -3,11 +3,9 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use game_build_tools::level::{alpha_blend_new, AbyssPolicy, LevelSpec};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 
-fn main() {
-    println!("cargo:rerun-if-changed=src/assets/level_specs");
-
+fn build_level_basic(level_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let (tile_sheet, level_layer) = LevelSpec::new(
-        image::open("src/assets/level_specs/test_layout.png")
+        image::open(format!("src/assets/level_specs/{}_layout.png", level_name))
             .expect("Failed to load level layout")
             .into(),
         image::open("src/assets/level_specs/environment.png")
@@ -15,21 +13,14 @@ fn main() {
             .into(),
         (32, 32),
     )
-    .register((0, 0, 0), (0, 2))
-    .register((255, 0, 0), (0, 1))
-    .compile()
-    .expect("Failed to compile level spec");
+    .register((0, 0, 0), (0, 2)) // air
+    .register((255, 0, 0), (0, 1)) // wall
+    .register((255, 255, 0), (0, 7)) // door
+    .compile()?;
 
     level_layer
-        .render(&tile_sheet)
-        .expect("Failed to render test level")
-        .save("src/assets/level_generated/test.png")
-        .expect("Failed to save test level image");
-
-    let collision_map = level_layer.value_where(|layer_val| layer_val == 1, 1);
-    collision_map
-        .dump_csv("src/assets/level_generated/collision.csv")
-        .expect("Failed to dump collision map CSV");
+        .render(&tile_sheet)?
+        .save(format!("src/assets/level_generated/{}.png", level_name))?;
 
     // Find the places where we should put front walls
     let wall_locations = level_layer.convolve(|neighborhood| {
@@ -58,13 +49,9 @@ fn main() {
     let ceiling_autotile_sheet = tile_sheet.canonical_autotile((1, 5), (0, 2));
     let ceiling_autotile_layer = ceiling_locations.autotile_with(1, AbyssPolicy::PadWithSelf);
 
-    let ceiling_image = ceiling_autotile_layer
-        .render(&ceiling_autotile_sheet)
-        .expect("Failed to render ceiling layer");
+    let ceiling_image = ceiling_autotile_layer.render(&ceiling_autotile_sheet)?;
 
-    let front_walls_image = wall_locations
-        .render(&tile_sheet)
-        .expect("Failed to render front walls layer");
+    let front_walls_image = wall_locations.render(&tile_sheet)?;
 
     // Ambient occlusion
     let ao_locations = ceiling_locations.convolve(|neighborhood| {
@@ -85,16 +72,46 @@ fn main() {
         .render(&ao_autotile_sheet)
         .expect("Failed to render AO layer");
 
-    let ceiling_image = alpha_blend_new(&ceiling_image, &ao_image, 0, 0);
+    let door_shadow_tiles = tile_sheet
+        .clean_clone()
+        .register(0, (0, 2))
+        .contiguous_tiles(&(0..=0), &(7..=10), false);
+
+    let door_shadow_layer = level_layer.convolve(|neighborhood| {
+        if neighborhood.get(0, 0) == Some(2) {
+            if neighborhood.get(0, 1).is_none() {
+                1
+            } else if neighborhood.get(1, 0).is_none() {
+                2
+            } else if neighborhood.get(0, -1).is_none() {
+                3
+            } else if neighborhood.get(-1, 0).is_none() {
+                4
+            } else {
+                0
+            }
+        } else {
+            0
+        }
+    });
+
+    let door_shadow_image = door_shadow_layer
+        .render(&door_shadow_tiles)
+        .expect("Failed to render door shadow layer");
+
+    let ao_image = alpha_blend_new(&ao_image, &door_shadow_image, 0, 0);
+
+    let ceiling_image = alpha_blend_new(&ao_image, &ceiling_image, 0, 0);
 
     // Merge the images
     let level_image = alpha_blend_new(&front_walls_image, &ceiling_image, 0, 0);
 
-    level_image
-        .save("src/assets/level_generated/test_with_walls.png")
-        .expect("Failed to save level image with walls");
+    level_image.save(format!(
+        "src/assets/level_generated/{}_with_walls.png",
+        level_name
+    ))?;
 
-    let floor_tiles = tile_sheet.contiguous_tiles(&(0..=0), &(3..=6));
+    let floor_tiles = tile_sheet.contiguous_tiles(&(0..=0), &(3..=6), true);
 
     let floor_layer = level_layer.ones_like().fill_with(|x, y| {
         let mut hasher = DefaultHasher::new();
@@ -105,11 +122,33 @@ fn main() {
         tile_id as u32
     });
 
-    let floor_image = floor_layer
-        .render(&floor_tiles)
-        .expect("Failed to render floor layer");
+    let floor_image = floor_layer.render(&floor_tiles)?;
 
-    floor_image
-        .save("src/assets/level_generated/floor.png")
-        .expect("Failed to save floor image");
+    floor_image.save(format!(
+        "src/assets/level_generated/{}_floor.png",
+        level_name
+    ))?;
+
+    let collision_layer = level_layer.zip_with(&door_shadow_layer, |original, door_shadow| {
+        if door_shadow > 0 {
+            door_shadow + 1
+        } else {
+            original
+        }
+    });
+
+    collision_layer.dump_csv(&format!(
+        "src/assets/level_generated/{}_collision.csv",
+        level_name
+    ))?;
+
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("cargo:rerun-if-changed=src/assets/level_specs");
+
+    build_level_basic("spawn")?;
+
+    Ok(())
 }

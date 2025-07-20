@@ -22,7 +22,7 @@ pub fn alpha_blend_new(base: &RgbaImage, overlay: &RgbaImage, x: u32, y: u32) ->
     let (overlay_width, overlay_height) = base.dimensions();
 
     // Create new image with same dimensions as base
-    let mut result = overlay.clone();
+    let mut result = base.clone();
 
     for dy in 0..overlay_height {
         for dx in 0..overlay_width {
@@ -34,7 +34,7 @@ pub fn alpha_blend_new(base: &RgbaImage, overlay: &RgbaImage, x: u32, y: u32) ->
                 continue;
             }
 
-            let overlay_pixel = base.get_pixel(dx, dy);
+            let overlay_pixel = overlay.get_pixel(dx, dy);
             let base_pixel = result.get_pixel_mut(base_x, base_y);
 
             // Alpha blending formula: result = src * src_alpha + dst * (1 - src_alpha)
@@ -187,6 +187,7 @@ impl TileSheet {
             );
         }
         tile_sheet.tile_mapping.insert(tile_id, position);
+        tile_sheet.tile_inv_mapping.insert(position, tile_id);
         tile_sheet
     }
 
@@ -234,6 +235,15 @@ impl TileSheet {
         }
     }
 
+    pub fn non_clean_clone(&self) -> Self {
+        Self {
+            image: self.image.clone(),
+            num_tiles: self.num_tiles,
+            tile_mapping: self.tile_mapping.clone(),
+            tile_inv_mapping: self.tile_inv_mapping.clone(),
+        }
+    }
+
     pub fn canonical_autotile(&self, (start_x, start_y): (u32, u32), air: (u32, u32)) -> Self {
         // Canonical autotile defines an autotile region which is always 10 rows
         // and 5 cols rows, starting from the given position like so:
@@ -243,6 +253,7 @@ impl TileSheet {
         // 3 8 13 ..
         // 4 9 14 ..
         let mut autotile = self.clean_clone();
+
         autotile.allocate_tile_id((air.0 as usize, air.1 as usize));
         for col in 0..10 {
             for row in 0..5 {
@@ -257,8 +268,18 @@ impl TileSheet {
         &self,
         range_x: &RangeInclusive<u32>,
         range_y: &RangeInclusive<u32>,
+        clean: bool,
     ) -> Self {
-        let mut contiguous = self.clean_clone();
+        let mut contiguous = if clean {
+            self.clean_clone()
+        } else {
+            self.non_clean_clone()
+        };
+
+        build_log!(
+            "current number of tiles: {}",
+            contiguous.count_registered_tiles()
+        );
         for x in range_x.clone() {
             for y in range_y.clone() {
                 let value = contiguous.allocate_tile_id((x as usize, y as usize));
