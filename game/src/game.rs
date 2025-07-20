@@ -23,7 +23,7 @@ use crate::{
 struct GameLevelSpec {
     pub background: GizmoSpriteSheet,
     pub decoration: GizmoSpriteSheet,
-    collision: Vec<Transform>,
+    collision: Vec<(Transform, u32)>, // (Transform, tile_id)
     num_tiles: (usize, usize),
     tile_size: f32,
 }
@@ -57,11 +57,12 @@ impl GameLevelSpec {
         let mut colliders = Vec::new();
         for (y, row) in load_data.collision_csv.lines().enumerate() {
             for (x, tile_id) in row.split(',').enumerate() {
-                if tile_id.trim() == "1" {
+                let tile_id: u32 = tile_id.trim().parse().expect("Failed to parse tile ID");
+                if tile_id != 0 {
                     let transform = Transform::new()
                         .translate(Vec3::new(x as f32, y as f32, 0.0))
                         .scale(Vec3::new(1.0, 1.0, 1.0));
-                    colliders.push(transform);
+                    colliders.push((transform, tile_id));
                 }
             }
         }
@@ -80,15 +81,19 @@ impl GameLevelSpec {
         base_transform.scale(Vec3::new(width as f32, height as f32, 1.0))
     }
 
-    pub fn collides_with(&self, origin: &Transform, other_space: &Transform) -> Option<Collision> {
-        for collider in &self.collision {
+    pub fn collides_with<CollisionHandler: FnMut(Collision, u32)>(
+        &self,
+        origin: &Transform,
+        other_space: &Transform,
+        handler: &mut CollisionHandler,
+    ) {
+        for (collider, id) in &self.collision {
             if let Some(collision) =
                 Collision::do_spaces_collide(&origin.then(collider), other_space)
             {
-                return Some(collision);
+                handler(collision, *id);
             }
         }
-        None
     }
 
     pub fn _visualize_collisions(
@@ -97,7 +102,7 @@ impl GameLevelSpec {
         drawer: &mut Drawer,
         sprite: GizmoSprite,
     ) {
-        for collider in &self.collision {
+        for (collider, id) in &self.collision {
             let transform = origin.then(collider);
             drawer.draw_square_slow(Some(&transform), Some(&EngineColor::RED), sprite.clone());
         }
@@ -108,6 +113,7 @@ impl GameLevelSpec {
         end: Vec2,
         level: &GameLevelSpec,
         level_origin: &Transform,
+        query_value: u32,
     ) -> bool {
         let direction = (end - start).normalize();
         let distance = start.distance(end);
@@ -119,7 +125,13 @@ impl GameLevelSpec {
             .scale(Vec3::new(distance, width, 1.0))
             .set_origin(&Transform::new().translate(Vec3::new(0.0, 0.5, 0.0)));
 
-        level.collides_with(level_origin, &line_transform).is_some()
+        let mut collides = false;
+        level.collides_with(level_origin, &line_transform, &mut |_collision, id| {
+            if id == query_value {
+                collides = true;
+            }
+        });
+        collides
     }
 }
 
@@ -369,6 +381,7 @@ impl Enemy {
                         level,
                         &Transform::new()
                             .set_origin(&Transform::new().translate(Vec3::new(8.0, 8.0, 0.0))),
+                        1,
                     );
                     if can_see {
                         self.state = EnemyAIState::Chasing(player.feet_position().floor() + 0.5);
@@ -402,6 +415,7 @@ impl Enemy {
                     level,
                     &Transform::new()
                         .set_origin(&Transform::new().translate(Vec3::new(8.0, 8.0, 0.0))),
+                    1,
                 );
                 if can_see {
                     self.state = EnemyAIState::Chasing(player.feet_position().floor() + 0.5);
@@ -895,6 +909,11 @@ impl RoomManager {
         }
     }
 
+    pub fn add_room_spec(mut self, spec: GameLevelSpec) -> Self {
+        self.room_pool.push(Rc::new(spec));
+        self
+    }
+
     pub fn get_current_room(&self) -> &ActiveRoom {
         self.rooms
             .get(&self.current_room)
@@ -981,6 +1000,19 @@ impl Game {
                     rendering_system,
                 )
                 .expect("Failed to load spawn level"),
+            )
+            .add_room_spec(
+                GameLevelSpec::load(
+                    GameLevelLoadData {
+                        background_bytes: include_bytes!("assets/level_generated/base_0_floor.png"),
+                        decoration_bytes: include_bytes!(
+                            "assets/level_generated/base_0_with_walls.png"
+                        ),
+                        collision_csv: include_str!("assets/level_generated/base_0_collision.csv"),
+                    },
+                    rendering_system,
+                )
+                .expect("Failed to load level"),
             ),
         }
     }
@@ -991,10 +1023,17 @@ impl Game {
 
         if self.player.health > 0.0 {
             let player_event = self.player.update(input, delta_time, |player_space| {
-                self.manager
-                    .get_current_room()
-                    .spec
-                    .collides_with(&level_origin, player_space)
+                let mut collision_result = None;
+                self.manager.get_current_room().spec.collides_with(
+                    &level_origin,
+                    player_space,
+                    &mut |collision, id| {
+                        if id == 1 {
+                            collision_result = Some(collision);
+                        }
+                    },
+                );
+                collision_result
             });
 
             match player_event {
@@ -1010,6 +1049,60 @@ impl Game {
                 },
                 CharacterEvent::WalkCycle => {
                     audio_system.play(&self.walk_audio, self.rng.random_range(0.8..1.2));
+                }
+            }
+
+            // Level advancing:
+            // collides with:
+            // 2 -> move down
+            // 3 -> move right
+            // 4 -> move up
+            // 5 -> move left
+            let player_space = self.player.controller.collider(&level_origin);
+            let mut collision_result = None;
+            self.manager.get_current_room().spec.collides_with(
+                &level_origin,
+                &player_space,
+                &mut |collision, id| {
+                    if id == 2 || id == 3 || id == 4 || id == 5 {
+                        collision_result = Some((collision, id));
+                    }
+                },
+            );
+            if let Some((collision, id)) = collision_result {
+                let current_position = self.manager.current_room;
+                let new_position = match id {
+                    2 => (
+                        current_position.0,
+                        current_position.1 - 1,
+                        current_position.2,
+                    ), // Move down
+                    3 => (
+                        current_position.0 + 1,
+                        current_position.1,
+                        current_position.2,
+                    ), // Move right
+                    4 => (
+                        current_position.0,
+                        current_position.1 + 1,
+                        current_position.2,
+                    ), // Move up
+                    5 => (
+                        current_position.0 - 1,
+                        current_position.1,
+                        current_position.2,
+                    ), // Move left
+                    _ => current_position,
+                };
+                self.manager.change_room(new_position);
+                info!("Changed room to: {:?}", new_position);
+                // Move player position accordingly
+                match id {
+                    2 => self.player.controller.position.y = 1.5, // Move down
+                    3 => self.player.controller.position.x = 1.5, // Move right
+                    4 => self.player.controller.position.y = 16.0 - 1.5, // Move up
+                    5 => self.player.controller.position.x = 16.0 - 1.5, // Move left
+                    _ => {}
                 }
             }
         }

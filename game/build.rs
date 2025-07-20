@@ -26,7 +26,8 @@ fn build_level_basic(level_name: &str) -> Result<(), Box<dyn std::error::Error>>
     let wall_locations = level_layer.convolve(|neighborhood| {
         if neighborhood.get(0, 0) == Some(1)
             && neighborhood.get(0, -1) == Some(1)
-            && neighborhood.get(0, 1) == Some(0)
+            && neighborhood.get(0, 1) != Some(1)
+            && neighborhood.get(0, 1).is_some()
         {
             1
         } else {
@@ -149,6 +150,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=src/assets/level_specs");
 
     build_level_basic("spawn")?;
+    build_level_basic("base_0")?;
 
     Ok(())
 }

@@ -7,6 +7,7 @@ mod renderer;
 
 use core::panic;
 use game::Game;
+use log::info;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -347,19 +348,21 @@ impl ApplicationHandler for WebApp {
                             // Check if this key is part of any key press group
                             for group in &mut input.key_press_groups {
                                 if group.keys.contains(&code) {
-                                    group.stack.push(code);
+                                    //group.stack.push(code);
+                                    if !group.stack.contains(&code) {
+                                        group.stack.push(code);
+                                    }
                                 }
+                                info!("Key pressed: {:?}, stack: {:?}", code, group.stack);
                             }
                         } else if state == ElementState::Released {
-                            // If the head is released, pop it from the stack
+                            // If the head is released, remove it regardless of where it is in the stack
                             for group in &mut input.key_press_groups {
                                 if group.keys.contains(&code) {
-                                    if let Some(last) = group.stack.last() {
-                                        if *last == code {
-                                            group.stack.pop();
-                                            break;
-                                        }
+                                    if let Some(pos) = group.stack.iter().position(|&k| k == code) {
+                                        group.stack.remove(pos);
                                     }
+                                    info!("Key released: {:?}, stack: {:?}", code, group.stack);
                                 }
                             }
                         }
