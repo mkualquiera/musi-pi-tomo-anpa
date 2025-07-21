@@ -2,7 +2,10 @@ use core::f32;
 use std::{collections::HashMap, rc::Rc};
 
 use glam::{Vec2, Vec3};
-use glyphon::cosmic_text::ttf_parser::math;
+use glyphon::{
+    cosmic_text::{ttf_parser::math, CacheKeyFlags, FeatureTag, FontFeatures},
+    Attrs, Color as GlyphonColor,
+};
 use log::info;
 use rand::{rngs::StdRng, seq::IndexedRandom, Rng, SeedableRng};
 use wgpu::Color;
@@ -12,9 +15,11 @@ use crate::{
     audio::{AudioHandle, AudioSystem},
     collision::Collision,
     geometry::Transform,
+    nimi::{convert_latin_to_ucsur, number_to_toki_pona},
     ortographic_camera::OrthoCamera,
     renderer::{
         gizmo::{GizmoSprite, GizmoSpriteSheet},
+        text::FeaturedTextBuffer,
         Drawer, EngineColor, RenderingSystem,
     },
     InputSystem, InputSystemConfig, KeyPressGroupHandle,
@@ -948,6 +953,10 @@ pub struct Game {
     stance_broken_audio: AudioHandle,
 
     manager: RoomManager,
+
+    test_text: FeaturedTextBuffer,
+
+    counter: f32,
 }
 
 impl Game {
@@ -964,6 +973,11 @@ impl Game {
         audio_system: &mut AudioSystem,
         input_config: &mut InputSystemConfig,
     ) -> Self {
+        rendering_system
+            .text_pipeline
+            .borrow_mut()
+            .load_font(include_bytes!("assets/leko majuna.ttf"));
+
         let rng = StdRng::from_seed([0; 32]); // Seed with zeros for reproducibility
         Self {
             player: Player::new(
@@ -1014,10 +1028,31 @@ impl Game {
                 )
                 .expect("Failed to load level"),
             ),
+            test_text: rendering_system.text_pipeline.borrow_mut().create_buffer(
+                8.0,
+                9.0,
+                200.0,
+                9.0,
+                "jan pi [toki-pona] li jan pi [pona mute]",
+                Attrs::new().family(glyphon::Family::SansSerif),
+            ),
+            counter: 0.0,
         }
     }
 
-    pub fn update(&mut self, input: &InputSystem, audio_system: &mut AudioSystem, delta_time: f32) {
+    pub fn update(
+        &mut self,
+        input: &InputSystem,
+        audio_system: &mut AudioSystem,
+        rendering_system: &mut RenderingSystem,
+        delta_time: f32,
+    ) {
+        self.counter += delta_time * 1.0;
+        self.test_text.set_text(
+            &mut rendering_system.text_pipeline.borrow_mut(),
+            &convert_latin_to_ucsur(&number_to_toki_pona(self.counter as u32)),
+        );
+
         let level_origin =
             Transform::new().set_origin(&Transform::new().translate(Vec3::new(0.0, 0.0, 0.0)));
 
@@ -1098,10 +1133,10 @@ impl Game {
                 info!("Changed room to: {:?}", new_position);
                 // Move player position accordingly
                 match id {
-                    2 => self.player.controller.position.y = 1.5, // Move down
-                    3 => self.player.controller.position.x = 1.5, // Move right
-                    4 => self.player.controller.position.y = 16.0 - 1.5, // Move up
-                    5 => self.player.controller.position.x = 16.0 - 1.5, // Move left
+                    2 => self.player.controller.position.y = 1.0, // Move down
+                    3 => self.player.controller.position.x = 1.25, // Move right
+                    4 => self.player.controller.position.y = 14.5, // Move up
+                    5 => self.player.controller.position.x = 14.75, // Move left
                     _ => {}
                 }
             }
@@ -1196,6 +1231,14 @@ impl Game {
             ),
             Some(&EngineColor::YELLOW),
             white_sprite,
+        );
+
+        drawer.draw_text_slow(
+            &self.test_text,
+            20.0,
+            0.0,
+            1.0,
+            GlyphonColor::rgba(255, 255, 255, 255),
         );
     }
 }

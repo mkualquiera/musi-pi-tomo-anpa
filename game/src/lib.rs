@@ -2,12 +2,12 @@ mod audio;
 mod collision;
 mod game;
 mod geometry;
+mod nimi;
 mod ortographic_camera;
 mod renderer;
 
 use core::panic;
 use game::Game;
-use log::info;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -311,7 +311,7 @@ impl ApplicationHandler for WebApp {
                     // Only call update if we have a last time
                     if let Some(last_time) = self.last_time {
                         let delta_time = (now - last_time) as f32 / 1000.0; // Convert to seconds
-                        game.update(input, audio, delta_time);
+                        game.update(input, audio, renderer, delta_time);
                     }
                     self.last_time = Some(now);
 
@@ -348,21 +348,19 @@ impl ApplicationHandler for WebApp {
                             // Check if this key is part of any key press group
                             for group in &mut input.key_press_groups {
                                 if group.keys.contains(&code) {
-                                    //group.stack.push(code);
-                                    if !group.stack.contains(&code) {
-                                        group.stack.push(code);
-                                    }
+                                    group.stack.push(code);
                                 }
-                                info!("Key pressed: {:?}, stack: {:?}", code, group.stack);
                             }
                         } else if state == ElementState::Released {
-                            // If the head is released, remove it regardless of where it is in the stack
+                            // If the head is released, z
                             for group in &mut input.key_press_groups {
                                 if group.keys.contains(&code) {
-                                    if let Some(pos) = group.stack.iter().position(|&k| k == code) {
-                                        group.stack.remove(pos);
+                                    if let Some(last) = group.stack.last() {
+                                        if *last == code {
+                                            group.stack.pop();
+                                            break;
+                                        }
                                     }
-                                    info!("Key released: {:?}, stack: {:?}", code, group.stack);
                                 }
                             }
                         }

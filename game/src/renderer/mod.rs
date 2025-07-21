@@ -1,8 +1,10 @@
 pub mod gizmo;
+pub mod text;
 
 use glam::Mat4;
+use glyphon::{Color as GlyphonColor, Resolution};
 use image::GenericImageView;
-use std::{mem, sync::Arc};
+use std::{cell::RefCell, mem, rc::Rc, sync::Arc};
 use wgpu::{
     wgc::device, Buffer, Color, CommandBuffer, Device, Queue, Surface, SurfaceConfiguration,
     TexelCopyBufferLayout, Texture, TextureDescriptor, TextureView,
@@ -12,8 +14,11 @@ use winit::window::Window;
 use crate::{
     game::Game,
     geometry::Transform,
-    renderer::gizmo::{
-        GizmoBindableTexture, GizmoRenderPipeline, GizmoSprite, GizmoSpriteSheet, SpriteSpec,
+    renderer::{
+        gizmo::{
+            GizmoBindableTexture, GizmoRenderPipeline, GizmoSprite, GizmoSpriteSheet, SpriteSpec,
+        },
+        text::{FeaturedTextBuffer, TextRenderPipeline},
     },
 };
 
@@ -96,6 +101,9 @@ pub struct RenderingSystem {
     alignment_hint: u32,
 
     white_gizmo_texture: GizmoBindableTexture,
+
+    pub text_pipeline: Rc<RefCell<TextRenderPipeline>>,
+    original_size: (u32, u32),
 }
 
 pub struct Drawer<'a> {
@@ -174,6 +182,8 @@ impl RenderingSystem {
             Self::create_texture(&device, &queue, 1, 1, Some(&[255, 255, 255, 255])),
         );
 
+        let text_pipeline = TextRenderPipeline::new(&device, &queue, surface_format);
+
         Self {
             surface,
             device,
@@ -185,6 +195,8 @@ impl RenderingSystem {
             gizmo_pipeline,
             alignment_hint,
             white_gizmo_texture,
+            text_pipeline: Rc::new(RefCell::new(text_pipeline)),
+            original_size: (width, height),
         }
     }
 
@@ -230,6 +242,8 @@ impl RenderingSystem {
         drawer.flush();
 
         output.present();
+
+        self.text_pipeline.borrow_mut().atlas.trim();
 
         Ok(())
     }
@@ -475,6 +489,64 @@ impl<'a> Drawer<'a> {
                 selected_tile: [0, 0],
             },
         }
+    }
+
+    pub fn draw_text_slow(
+        &mut self,
+        text_buffer: &FeaturedTextBuffer,
+        x: f32,
+        y: f32,
+        scale: f32,
+        color: GlyphonColor,
+    ) {
+        self.renderer
+            .text_pipeline
+            .borrow_mut()
+            .prepare_for_text_draw(
+                &self.renderer.device,
+                &self.renderer.queue,
+                text_buffer,
+                Resolution {
+                    width: self.renderer.original_size.0,
+                    height: self.renderer.original_size.1,
+                },
+                color,
+                x,
+                y,
+                scale,
+            )
+            .expect("Failed to prepare text draw");
+
+        let mut encoder =
+            self.renderer
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Text Encoder"),
+                });
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Text Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: self.view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                occlusion_query_set: None,
+                timestamp_writes: None,
+            });
+
+            self.renderer
+                .text_pipeline
+                .borrow_mut()
+                .render(&mut render_pass)
+                .expect("Failed to render text");
+        }
+
+        self.command_buffers.push(encoder.finish());
     }
 
     pub fn flush(&mut self) {
