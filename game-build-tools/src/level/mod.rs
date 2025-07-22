@@ -547,11 +547,6 @@ impl LevelSpec {
         }
 
         // Ensure there are no missing colors
-        for color in color_map.iter().map(|&(c, _)| c) {
-            if !used_colors.contains(&color) {
-                return Err(format!("Color {:?} was not used in the layout", color));
-            }
-        }
         for color in used_colors {
             if !color_map.iter().any(|&(c, _)| c == color) {
                 return Err(format!("Color {:?} was used but not registered", color));

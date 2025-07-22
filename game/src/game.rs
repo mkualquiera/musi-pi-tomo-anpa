@@ -1232,7 +1232,7 @@ impl Game {
             ui_sheet_32,
             num_flasks_text,
             num_crystals_text,
-            crystal_count_buffer: CrystalCountBuffer::new(0.0, 50.0),
+            crystal_count_buffer: CrystalCountBuffer::new(0.0, 10.0),
         }
     }
 
