@@ -1,8 +1,8 @@
 use std::rc::Rc;
 
 use glyphon::{
-    Attrs, Buffer, Cache, Color, FontSystem, Metrics, Resolution, SwashCache, TextArea, TextAtlas,
-    TextBounds, TextRenderer, Viewport,
+    cosmic_text::Align, Attrs, Buffer, Cache, Color, FontSystem, Metrics, Resolution, SwashCache,
+    TextArea, TextAtlas, TextBounds, TextRenderer, Viewport,
 };
 use rand::rand_core::le;
 use wgpu::{Device, MultisampleState, TextureFormat};
@@ -24,6 +24,7 @@ pub struct FeaturedTextBuffer {
     attrs: Attrs<'static>,
     width: f32,
     height: f32,
+    align: Align,
 }
 
 impl FeaturedTextBuffer {
@@ -37,6 +38,9 @@ impl FeaturedTextBuffer {
             &self.attrs,
             glyphon::Shaping::Advanced,
         );
+        for line in self.buffer.lines.iter_mut() {
+            line.set_align(Some(self.align));
+        }
         self.buffer
             .shape_until_scroll(&mut pipeline.font_system, false);
     }
@@ -88,6 +92,7 @@ impl TextRenderPipeline {
         height: f32,
         text: &str,
         attrs: Attrs<'static>,
+        align: Align,
     ) -> FeaturedTextBuffer {
         let width = width * SCALING_FACTOR;
         let height = height * SCALING_FACTOR;
@@ -101,13 +106,18 @@ impl TextRenderPipeline {
             &attrs,
             glyphon::Shaping::Advanced,
         );
+        for line in buffer.lines.iter_mut() {
+            line.set_align(Some(align));
+        }
         buffer.shape_until_scroll(&mut self.font_system, false);
+
         FeaturedTextBuffer {
             buffer,
             text: text.to_string(),
             attrs,
             width,
             height,
+            align,
         }
     }
 

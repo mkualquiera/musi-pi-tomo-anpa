@@ -338,10 +338,11 @@ impl RenderingSystem {
         height: f32,
         text: &str,
         attrs: glyphon::Attrs<'static>,
+        align: glyphon::cosmic_text::Align,
     ) -> FeaturedTextBuffer {
         self.text_pipeline
             .borrow_mut()
-            .create_buffer(font_size, line_size, width, height, text, attrs)
+            .create_buffer(font_size, line_size, width, height, text, attrs, align)
     }
 
     pub fn load_font(&mut self, bytes: &[u8]) {

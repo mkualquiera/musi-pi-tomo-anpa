@@ -3,7 +3,7 @@ use std::{collections::HashMap, rc::Rc};
 
 use glam::{Vec2, Vec3};
 use glyphon::{
-    cosmic_text::{ttf_parser::math, CacheKeyFlags, FeatureTag, FontFeatures},
+    cosmic_text::{ttf_parser::math, Align, CacheKeyFlags, FeatureTag, FontFeatures},
     Attrs, Color as GlyphonColor,
 };
 use log::info;
@@ -804,6 +804,8 @@ struct Player {
     max_healing_flasks: u32,
     healing_state: HealingState,
     healing_group_handle: KeyPressGroupHandle,
+
+    num_crystals: u32,
 }
 
 enum CharacterEvent {
@@ -870,6 +872,7 @@ impl Player {
             max_healing_flasks: 5,
             healing_state: HealingState::Ready,
             healing_group_handle: input_config.allocate_group(&[KeyCode::KeyH]),
+            num_crystals: 0, // Default number of crystals
         }
     }
 
@@ -1037,6 +1040,66 @@ impl RoomManager {
     }
 }
 
+enum CrystalCountState {
+    None,
+    Counting { duration: f32 },
+}
+
+struct CrystalCountBuffer {
+    target_num: f32,
+    current_num: f32,
+    state: CrystalCountState,
+    speed: f32,
+}
+
+impl CrystalCountBuffer {
+    pub fn new(current_num: f32, speed: f32) -> Self {
+        Self {
+            target_num: current_num,
+            current_num,
+            state: CrystalCountState::None,
+            speed,
+        }
+    }
+
+    pub fn update(&mut self, delta_time: f32) {
+        let speed_per_second = self.speed * delta_time;
+        let delta = self.target_num - self.current_num;
+        if delta.abs() < speed_per_second {
+            self.current_num = self.target_num; // Snap to target if within speed range
+        } else if delta > 0.0 {
+            self.current_num += speed_per_second * delta.signum(); // Increment towards target
+        }
+
+        match self.state {
+            CrystalCountState::None => {
+                if self.current_num != self.target_num {
+                    self.state = CrystalCountState::Counting {
+                        duration: 0.0, // Start counting down from 0.5 seconds
+                    };
+                }
+            }
+            CrystalCountState::Counting { duration } => {
+                if self.current_num == self.target_num {
+                    self.state = CrystalCountState::None; // Stop counting if we reached the target
+                } else {
+                    self.state = CrystalCountState::Counting {
+                        duration: duration + delta_time,
+                    };
+                }
+            }
+        }
+    }
+
+    pub fn get_load(&self) -> f32 {
+        // duration is the load
+        match self.state {
+            CrystalCountState::None => 0.0,
+            CrystalCountState::Counting { duration } => duration,
+        }
+    }
+}
+
 pub struct Game {
     player: Player,
     camera: OrthoCamera,
@@ -1050,8 +1113,12 @@ pub struct Game {
 
     manager: RoomManager,
 
-    ui_sheet: GizmoSpriteSheet,
+    ui_sheet_32: GizmoSpriteSheet,
+    ui_sheet_16: GizmoSpriteSheet,
     num_flasks_text: FeaturedTextBuffer,
+
+    num_crystals_text: FeaturedTextBuffer,
+    crystal_count_buffer: CrystalCountBuffer,
 }
 
 impl Game {
@@ -1068,23 +1135,20 @@ impl Game {
         audio_system: &mut AudioSystem,
         input_config: &mut InputSystemConfig,
     ) -> Self {
-        let ui_sheet = rendering_system.gizmo_sprite_sheet_from_encoded_image(
+        let ui_sheet_32 = rendering_system.gizmo_sprite_sheet_from_encoded_image(
             include_bytes!("assets/ui.png"),
             [0.0, 0.0],
             [1.0, 1.0],
-            [1, 5],
+            [2, 5],
+        );
+        let ui_sheet_16 = rendering_system.gizmo_sprite_sheet_from_encoded_image(
+            include_bytes!("assets/ui.png"),
+            [0.0, 0.0],
+            [1.0, 1.0],
+            [4, 10],
         );
 
         rendering_system.load_font(include_bytes!("assets/leko majuna.ttf"));
-
-        let test_text = rendering_system.create_text_buffer(
-            8.0,
-            9.0,
-            200.0,
-            9.0,
-            "jan pi [toki-pona] li jan pi [pona mute]",
-            Attrs::new().family(glyphon::Family::SansSerif),
-        );
 
         let num_flasks_text = rendering_system.create_text_buffer(
             16.0,
@@ -1093,6 +1157,17 @@ impl Game {
             16.0,
             "ala",
             Attrs::new().family(glyphon::Family::SansSerif),
+            Align::Left,
+        );
+
+        let num_crystals_text = rendering_system.create_text_buffer(
+            8.0,
+            9.0,
+            128.0,
+            8.0,
+            "ala",
+            Attrs::new().family(glyphon::Family::SansSerif),
+            Align::Right,
         );
 
         let rng = StdRng::from_seed([0; 32]); // Seed with zeros for reproducibility
@@ -1153,8 +1228,11 @@ impl Game {
                 )
                 .expect("Failed to load level"),
             ),
-            ui_sheet,
+            ui_sheet_16,
+            ui_sheet_32,
             num_flasks_text,
+            num_crystals_text,
+            crystal_count_buffer: CrystalCountBuffer::new(0.0, 50.0),
         }
     }
 
@@ -1168,6 +1246,15 @@ impl Game {
         self.num_flasks_text.set_text(
             rendering_system,
             &convert_latin_to_ucsur(&number_to_toki_pona(self.player.healing_flasks)),
+        );
+
+        self.crystal_count_buffer.target_num = self.player.num_crystals as f32;
+        self.crystal_count_buffer.update(delta_time);
+        self.num_crystals_text.set_text(
+            rendering_system,
+            &convert_latin_to_ucsur(&number_to_toki_pona(
+                self.crystal_count_buffer.current_num as u32,
+            )),
         );
 
         let level_origin =
@@ -1248,6 +1335,9 @@ impl Game {
 
         if self.player.health > 0.0 {
             for enemy in room.enemies.iter_mut() {
+                if enemy.health <= 0.0 {
+                    continue; // Skip dead enemies
+                }
                 if let Some((attack_space, windup_duration)) =
                     self.player.get_attack_space(&level_origin)
                 {
@@ -1275,6 +1365,7 @@ impl Game {
                         if enemy.health <= 0.0 {
                             enemy.health = 0.0; // Prevent negative health
                             info!("Enemy defeated!");
+                            self.player.num_crystals += self.rng.random_range(10..=50);
                         }
                     }
                 }
@@ -1510,7 +1601,7 @@ impl Game {
         // Render healing flasks
         let flask_index = ((self.player.max_healing_flasks - self.player.healing_flasks) * 4)
             / self.player.max_healing_flasks;
-        let flask_sprite = self.ui_sheet.get_sprite([0, flask_index]).unwrap();
+        let flask_sprite = self.ui_sheet_32.get_sprite([0, flask_index]).unwrap();
         drawer.draw_square_slow(
             Some(
                 &ui_transform
@@ -1525,6 +1616,27 @@ impl Game {
             &self.num_flasks_text,
             8.0 + 32.0,
             240.0 - 16.0 - 8.0,
+            1.0,
+            GlyphonColor::rgba(255, 255, 255, 255),
+        );
+
+        // Render crystals
+        let crystal_load = self.crystal_count_buffer.get_load();
+        let crystal_index = (crystal_load as u32).min(4);
+        let crystal_sprite = self.ui_sheet_16.get_sprite([2, crystal_index]).unwrap();
+        drawer.draw_square_slow(
+            Some(
+                &ui_transform
+                    .translate(Vec3::new(320.0 - 8.0 - 16.0, 8.0, 0.0))
+                    .scale(Vec3::new(16.0, 16.0, 1.0)),
+            ),
+            Some(&EngineColor::WHITE),
+            crystal_sprite,
+        );
+        drawer.draw_text_slow(
+            &self.num_crystals_text,
+            320.0 - 8.0 - 16.0 - 128.0,
+            8.0 + 4.0,
             1.0,
             GlyphonColor::rgba(255, 255, 255, 255),
         );
