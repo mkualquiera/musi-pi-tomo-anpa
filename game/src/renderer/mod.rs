@@ -327,7 +327,25 @@ impl RenderingSystem {
         num_tiles: [u32; 2],
     ) -> GizmoSpriteSheet {
         let texture = self.gizmo_texture_from_encoded_image(image_data);
-        GizmoSpriteSheet::new(texture, region_start, region_end, num_tiles)
+        GizmoSpriteSheet::new(Rc::new(texture), region_start, region_end, num_tiles)
+    }
+
+    pub fn create_text_buffer(
+        &mut self,
+        font_size: f32,
+        line_size: f32,
+        width: f32,
+        height: f32,
+        text: &str,
+        attrs: glyphon::Attrs<'static>,
+    ) -> FeaturedTextBuffer {
+        self.text_pipeline
+            .borrow_mut()
+            .create_buffer(font_size, line_size, width, height, text, attrs)
+    }
+
+    pub fn load_font(&mut self, bytes: &[u8]) {
+        self.text_pipeline.borrow_mut().load_font(bytes);
     }
 }
 

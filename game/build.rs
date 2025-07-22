@@ -1,7 +1,7 @@
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use game_build_tools::level::{alpha_blend_new, AbyssPolicy, LevelSpec};
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rand_core::le, rngs::StdRng, Rng, SeedableRng};
 
 fn build_level_basic(level_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     let (tile_sheet, level_layer) = LevelSpec::new(
@@ -16,7 +16,21 @@ fn build_level_basic(level_name: &str) -> Result<(), Box<dyn std::error::Error>>
     .register((0, 0, 0), (0, 2)) // air
     .register((255, 0, 0), (0, 1)) // wall
     .register((255, 255, 0), (0, 7)) // door
+    .register((0, 0, 255), (0, 0)) // enemy
     .compile()?;
+
+    let enemy_locations = level_layer.value_where(|v| v == 3, 1);
+    let level_layer = level_layer.zip_with(&enemy_locations, |original, enemy| {
+        if enemy == 1 {
+            0 // Remove enemies from the level layer
+        } else {
+            original
+        }
+    });
+    enemy_locations.dump_csv(&format!(
+        "src/assets/level_generated/{}_enemies.csv",
+        level_name
+    ))?;
 
     level_layer
         .render(&tile_sheet)?

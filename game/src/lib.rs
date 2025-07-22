@@ -133,6 +133,11 @@ impl InputSystem {
             .get(group_handle.index)
             .and_then(|group| group.stack.last().cloned())
     }
+    fn debounce(&mut self, group_handle: &KeyPressGroupHandle) {
+        if let Some(group) = self.key_press_groups.get_mut(group_handle.index) {
+            group.stack.clear();
+        }
+    }
 }
 
 impl AppState {
@@ -352,15 +357,9 @@ impl ApplicationHandler for WebApp {
                                 }
                             }
                         } else if state == ElementState::Released {
-                            // If the head is released, z
                             for group in &mut input.key_press_groups {
                                 if group.keys.contains(&code) {
-                                    if let Some(last) = group.stack.last() {
-                                        if *last == code {
-                                            group.stack.pop();
-                                            break;
-                                        }
-                                    }
+                                    group.stack.retain(|&x| x != code);
                                 }
                             }
                         }

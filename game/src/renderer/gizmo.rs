@@ -1,4 +1,4 @@
-use std::mem;
+use std::{mem, rc::Rc};
 
 use wgpu::{
     BindGroup, BindGroupLayout, BindGroupLayoutEntry, Buffer, Device, Queue, RenderPipeline,
@@ -93,8 +93,9 @@ impl From<SpriteSpec> for SpriteSpecPadded {
     }
 }
 
+#[derive(Clone)]
 pub struct GizmoSpriteSheet {
-    texture: GizmoBindableTexture,
+    texture: Rc<GizmoBindableTexture>,
     region_start: [f32; 2],
     region_end: [f32; 2],
     num_tiles: [u32; 2],
@@ -102,7 +103,7 @@ pub struct GizmoSpriteSheet {
 
 impl GizmoSpriteSheet {
     pub fn new(
-        texture: GizmoBindableTexture,
+        texture: Rc<GizmoBindableTexture>,
         region_start: [f32; 2],
         region_end: [f32; 2],
         num_tiles: [u32; 2],

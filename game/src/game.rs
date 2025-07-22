@@ -1,4 +1,4 @@
-use core::f32;
+use core::{f32, num};
 use std::{collections::HashMap, rc::Rc};
 
 use glam::{Vec2, Vec3};
@@ -29,6 +29,7 @@ struct GameLevelSpec {
     pub background: GizmoSpriteSheet,
     pub decoration: GizmoSpriteSheet,
     collision: Vec<(Transform, u32)>, // (Transform, tile_id)
+    enemy_locations: Vec<Vec2>,
     num_tiles: (usize, usize),
     tile_size: f32,
 }
@@ -37,6 +38,7 @@ struct GameLevelLoadData {
     background_bytes: &'static [u8],
     decoration_bytes: &'static [u8],
     collision_csv: &'static str,
+    enemies_csv: &'static str,
 }
 
 impl GameLevelSpec {
@@ -72,10 +74,21 @@ impl GameLevelSpec {
             }
         }
 
+        let mut enemy_locations = Vec::new();
+        for (y, row) in load_data.enemies_csv.lines().enumerate() {
+            for (x, tile_id) in row.split(',').enumerate() {
+                let tile_id: u32 = tile_id.trim().parse().expect("Failed to parse tile ID");
+                if tile_id != 0 {
+                    enemy_locations.push(Vec2::new(x as f32 + 0.5, y as f32 + 0.25));
+                }
+            }
+        }
+
         Ok(Self {
             background,
             decoration,
             collision: colliders,
+            enemy_locations,
             num_tiles: (16, 16),
             tile_size: 32.0,
         })
@@ -385,7 +398,7 @@ impl Enemy {
                         player.feet_position().floor() + 0.5,
                         level,
                         &Transform::new()
-                            .set_origin(&Transform::new().translate(Vec3::new(8.0, 8.0, 0.0))),
+                            .set_origin(&Transform::new().translate(Vec3::new(0.0, 0.0, 0.0))),
                         1,
                     );
                     if can_see {
@@ -419,7 +432,7 @@ impl Enemy {
                     player.feet_position().floor() + 0.5,
                     level,
                     &Transform::new()
-                        .set_origin(&Transform::new().translate(Vec3::new(8.0, 8.0, 0.0))),
+                        .set_origin(&Transform::new().translate(Vec3::new(0.0, 0.0, 0.0))),
                     1,
                 );
                 if can_see {
@@ -786,12 +799,49 @@ struct Player {
     attack_controller: AttackController,
     health: f32,
     poise: f32,
+
+    healing_flasks: u32,
+    max_healing_flasks: u32,
+    healing_state: HealingState,
+    healing_group_handle: KeyPressGroupHandle,
 }
 
 enum CharacterEvent {
     None,
     AttackControllerEvent(AttackControllerEvent),
     WalkCycle,
+}
+
+enum HealingState {
+    Ready,
+    Healing { current_time: f32 },
+}
+
+impl HealingState {
+    pub fn is_ready(&self) -> bool {
+        matches!(self, HealingState::Ready)
+    }
+
+    pub fn start_healing(&mut self) {
+        *self = HealingState::Healing { current_time: 0.0 };
+    }
+
+    pub fn cancel_healing(&mut self) {
+        *self = HealingState::Ready;
+    }
+
+    pub fn update(&mut self, delta_time: f32) -> bool {
+        if let HealingState::Healing { current_time } = self {
+            *current_time += delta_time;
+            if *current_time >= 1.0 {
+                // Healing takes 1 second
+                *self = HealingState::Ready;
+            }
+            true
+        } else {
+            false
+        }
+    }
 }
 
 impl Player {
@@ -816,16 +866,40 @@ impl Player {
             attack_controller: AttackController::new(),
             health: 100.0, // Default health
             poise: 50.0,
+            healing_flasks: 5,
+            max_healing_flasks: 5,
+            healing_state: HealingState::Ready,
+            healing_group_handle: input_config.allocate_group(&[KeyCode::KeyH]),
         }
     }
 
     pub fn update<CollidesWithWorld: Fn(&Transform) -> Option<Collision>>(
         &mut self,
-        input: &InputSystem,
+        input: &mut InputSystem,
         delta_time: f32,
         check_collision: CollidesWithWorld,
     ) -> CharacterEvent {
         let mut event = CharacterEvent::None;
+
+        let wants_to_attack = input.is_physical_key_down(KeyCode::KeyL);
+        let wants_to_heal = input
+            .get_last_key_pressed(&self.healing_group_handle)
+            .is_some()
+            && self.healing_flasks > 0
+            && self.attack_controller.is_ready();
+        input.debounce(&self.healing_group_handle);
+
+        if wants_to_heal {
+            self.healing_flasks -= 1;
+            self.healing_state.start_healing();
+        }
+
+        if self.healing_state.update(delta_time) {
+            self.health = (self.health + delta_time * 40.0).min(100.0);
+            self.controller.movement_speed = 1.0;
+        } else {
+            self.controller.movement_speed = 2.0;
+        }
 
         // Recover some poise
         self.poise = (self.poise + delta_time * 5.0).min(50.0);
@@ -839,7 +913,6 @@ impl Player {
         self.controller
             .update(&movement_intention, delta_time, check_collision);
 
-        // Simple logic
         let desired_orientation = if movement_intention.is_idle() {
             None
         } else {
@@ -859,15 +932,16 @@ impl Player {
             }
         }
 
-        let wants_to_attack = input.is_physical_key_down(KeyCode::KeyL);
         let attack_event = self.attack_controller.update(
             delta_time,
             if wants_to_attack {
+                self.healing_state.cancel_healing();
                 AttackIntention::Perpetual
             } else {
                 AttackIntention::None
             },
         );
+
         if !matches!(attack_event, AttackControllerEvent::None) {
             event = CharacterEvent::AttackControllerEvent(attack_event);
         }
@@ -881,6 +955,11 @@ impl Player {
             self.animation.orientation,
         )
     }
+
+    pub fn stagger(&mut self, duration: f32) -> bool {
+        self.healing_state.cancel_healing();
+        self.attack_controller.make_staggered(duration)
+    }
 }
 
 struct ActiveRoom {
@@ -889,8 +968,13 @@ struct ActiveRoom {
 }
 
 impl ActiveRoom {
-    pub fn from_spec(spec: Rc<GameLevelSpec>) -> Self {
-        let enemies = vec![];
+    pub fn from_spec(spec: Rc<GameLevelSpec>, enemy_sprite_sheet: GizmoSpriteSheet) -> Self {
+        let mut enemies = Vec::new();
+        for enemy_position in &spec.enemy_locations {
+            let enemy = Enemy::new(*enemy_position, enemy_sprite_sheet.clone());
+            enemies.push(enemy);
+        }
+
         Self { spec, enemies }
     }
 }
@@ -900,17 +984,22 @@ struct RoomManager {
     rooms: HashMap<(i32, i32, i32), ActiveRoom>,
     current_room: (i32, i32, i32),
     rng: StdRng,
+    enemy_sprite_sheet: GizmoSpriteSheet,
 }
 
 impl RoomManager {
-    pub fn new(spawn_spec: GameLevelSpec) -> Self {
+    pub fn new(spawn_spec: GameLevelSpec, enemy_sprite_sheet: GizmoSpriteSheet) -> Self {
         let mut rooms = HashMap::new();
-        rooms.insert((0, 0, 0), ActiveRoom::from_spec(Rc::new(spawn_spec)));
+        rooms.insert(
+            (0, 0, 0),
+            ActiveRoom::from_spec(Rc::new(spawn_spec), enemy_sprite_sheet.clone()),
+        );
         Self {
             room_pool: Vec::new(),
             rooms,
             current_room: (0, 0, 0),         // Starting room
             rng: StdRng::from_seed([0; 32]), // Seed with zeros for reproducibility
+            enemy_sprite_sheet: enemy_sprite_sheet.clone(),
         }
     }
 
@@ -925,6 +1014,12 @@ impl RoomManager {
             .expect("Current room not found")
     }
 
+    pub fn get_current_room_mut(&mut self) -> &mut ActiveRoom {
+        self.rooms
+            .get_mut(&self.current_room)
+            .expect("Current room not found")
+    }
+
     pub fn change_room(&mut self, position: (i32, i32, i32)) {
         if let std::collections::hash_map::Entry::Vacant(e) = self.rooms.entry(position) {
             let new_room_spec = self
@@ -932,7 +1027,8 @@ impl RoomManager {
                 .choose(&mut self.rng)
                 .expect("No room available for spawning");
 
-            let new_room = ActiveRoom::from_spec(new_room_spec.clone());
+            let new_room =
+                ActiveRoom::from_spec(new_room_spec.clone(), self.enemy_sprite_sheet.clone());
             e.insert(new_room);
             self.current_room = position; // Update current room to the newly created one
         } else {
@@ -954,9 +1050,8 @@ pub struct Game {
 
     manager: RoomManager,
 
-    test_text: FeaturedTextBuffer,
-
-    counter: f32,
+    ui_sheet: GizmoSpriteSheet,
+    num_flasks_text: FeaturedTextBuffer,
 }
 
 impl Game {
@@ -973,10 +1068,32 @@ impl Game {
         audio_system: &mut AudioSystem,
         input_config: &mut InputSystemConfig,
     ) -> Self {
-        rendering_system
-            .text_pipeline
-            .borrow_mut()
-            .load_font(include_bytes!("assets/leko majuna.ttf"));
+        let ui_sheet = rendering_system.gizmo_sprite_sheet_from_encoded_image(
+            include_bytes!("assets/ui.png"),
+            [0.0, 0.0],
+            [1.0, 1.0],
+            [1, 5],
+        );
+
+        rendering_system.load_font(include_bytes!("assets/leko majuna.ttf"));
+
+        let test_text = rendering_system.create_text_buffer(
+            8.0,
+            9.0,
+            200.0,
+            9.0,
+            "jan pi [toki-pona] li jan pi [pona mute]",
+            Attrs::new().family(glyphon::Family::SansSerif),
+        );
+
+        let num_flasks_text = rendering_system.create_text_buffer(
+            16.0,
+            17.0,
+            200.0,
+            16.0,
+            "ala",
+            Attrs::new().family(glyphon::Family::SansSerif),
+        );
 
         let rng = StdRng::from_seed([0; 32]); // Seed with zeros for reproducibility
         Self {
@@ -1010,10 +1127,17 @@ impl Game {
                             "assets/level_generated/spawn_with_walls.png"
                         ),
                         collision_csv: include_str!("assets/level_generated/spawn_collision.csv"),
+                        enemies_csv: include_str!("assets/level_generated/spawn_enemies.csv"),
                     },
                     rendering_system,
                 )
                 .expect("Failed to load spawn level"),
+                rendering_system.gizmo_sprite_sheet_from_encoded_image(
+                    include_bytes!("assets/char_template.png"),
+                    [0.0, 0.0],
+                    [1.0, 1.0],
+                    [3, 4],
+                ),
             )
             .add_room_spec(
                 GameLevelSpec::load(
@@ -1023,40 +1147,139 @@ impl Game {
                             "assets/level_generated/base_0_with_walls.png"
                         ),
                         collision_csv: include_str!("assets/level_generated/base_0_collision.csv"),
+                        enemies_csv: include_str!("assets/level_generated/base_0_enemies.csv"),
                     },
                     rendering_system,
                 )
                 .expect("Failed to load level"),
             ),
-            test_text: rendering_system.text_pipeline.borrow_mut().create_buffer(
-                8.0,
-                9.0,
-                200.0,
-                9.0,
-                "jan pi [toki-pona] li jan pi [pona mute]",
-                Attrs::new().family(glyphon::Family::SansSerif),
-            ),
-            counter: 0.0,
+            ui_sheet,
+            num_flasks_text,
         }
     }
 
     pub fn update(
         &mut self,
-        input: &InputSystem,
+        input: &mut InputSystem,
         audio_system: &mut AudioSystem,
         rendering_system: &mut RenderingSystem,
         delta_time: f32,
     ) {
-        self.counter += delta_time * 1.0;
-        self.test_text.set_text(
-            &mut rendering_system.text_pipeline.borrow_mut(),
-            &convert_latin_to_ucsur(&number_to_toki_pona(self.counter as u32)),
+        self.num_flasks_text.set_text(
+            rendering_system,
+            &convert_latin_to_ucsur(&number_to_toki_pona(self.player.healing_flasks)),
         );
 
         let level_origin =
             Transform::new().set_origin(&Transform::new().translate(Vec3::new(0.0, 0.0, 0.0)));
 
+        let room = self.manager.get_current_room_mut();
+
+        for enemy in room.enemies.iter_mut() {
+            if enemy.health > 0.0 {
+                let enemy_event = enemy.update(
+                    delta_time,
+                    |enemy_space| {
+                        let mut collision_result = None;
+                        room.spec.collides_with(
+                            &level_origin,
+                            enemy_space,
+                            &mut |collision, id| {
+                                if id == 1 {
+                                    collision_result = Some(collision);
+                                }
+                            },
+                        );
+                        collision_result
+                    },
+                    &self.player.controller,
+                    &room.spec,
+                    &mut self.rng,
+                );
+
+                match enemy_event {
+                    CharacterEvent::None => {}
+                    CharacterEvent::AttackControllerEvent(attack_event) => match attack_event {
+                        AttackControllerEvent::StartWindup => {
+                            audio_system.play(&self.windup_audio, self.rng.random_range(0.6..1.0));
+                        }
+                        AttackControllerEvent::StartAttack => {
+                            audio_system.play(&self.attack_audio, self.rng.random_range(0.6..1.0));
+                        }
+                        AttackControllerEvent::None => {}
+                    },
+                    CharacterEvent::WalkCycle => {
+                        audio_system.play(&self.walk_audio, self.rng.random_range(0.6..1.0));
+                    }
+                }
+
+                if let Some((attack_space, windup_duration)) = enemy.get_attack_space(&level_origin)
+                {
+                    if Collision::do_spaces_collide(
+                        &attack_space,
+                        &self.player.controller.collider(&level_origin),
+                    )
+                    .is_some()
+                    {
+                        self.player.health -= 400.0 * delta_time * windup_duration; // Deal damage to the player
+                        self.player.poise -= 400.0 * delta_time * windup_duration; // Deal poise damage to the player
+                        if self
+                            .player
+                            .attack_controller
+                            .make_staggered(windup_duration)
+                        {
+                            audio_system
+                                .play(&self.staggered_audio, self.rng.random_range(0.8..1.2));
+                        }
+                        if self.player.poise <= 0.0 {
+                            self.player.poise = 50.0; // Prevent negative poise
+                            self.player.attack_controller.make_staggered(1.0);
+                            audio_system
+                                .play(&self.stance_broken_audio, self.rng.random_range(0.8..1.2));
+                        }
+                        if self.player.health <= 0.0 {
+                            self.player.health = 0.0; // Prevent negative health
+                            info!("Player defeated!");
+                        }
+                    }
+                }
+            }
+        }
+
         if self.player.health > 0.0 {
+            for enemy in room.enemies.iter_mut() {
+                if let Some((attack_space, windup_duration)) =
+                    self.player.get_attack_space(&level_origin)
+                {
+                    let attacking_enemy = Collision::do_spaces_collide(
+                        &attack_space,
+                        &enemy.controller.collider(&level_origin),
+                    )
+                    .is_some();
+                    if attacking_enemy {
+                        enemy.health -= 100.0 * delta_time * windup_duration; // Deal damage to the enemy
+                        enemy.poise -= 100.0 * delta_time * windup_duration; // Deal poise damage to the enemy
+                        if enemy
+                            .attack_controller
+                            .make_staggered(windup_duration * 0.25)
+                        {
+                            audio_system
+                                .play(&self.staggered_audio, self.rng.random_range(0.6..1.0));
+                        }
+                        if enemy.poise <= 0.0 {
+                            enemy.poise = 50.0; // Prevent negative poise
+                            enemy.attack_controller.make_staggered(1.0);
+                            audio_system
+                                .play(&self.stance_broken_audio, self.rng.random_range(0.6..1.0));
+                        }
+                        if enemy.health <= 0.0 {
+                            enemy.health = 0.0; // Prevent negative health
+                            info!("Enemy defeated!");
+                        }
+                    }
+                }
+            }
+
             let player_event = self.player.update(input, delta_time, |player_space| {
                 let mut collision_result = None;
                 self.manager.get_current_room().spec.collides_with(
@@ -1173,6 +1396,57 @@ impl Game {
             current_level.spec.decoration.get_sprite([0, 0]).unwrap(),
         );
 
+        // Draw enemies
+        for enemy in &current_level.enemies {
+            if enemy.health > 0.0 {
+                let color = if let EnemyAIState::Chasing(_) = enemy.state {
+                    EngineColor::RED
+                } else {
+                    EngineColor::BLUE
+                };
+
+                drawer.draw_square_slow(
+                    Some(&enemy.controller.local_space(&view_transform)),
+                    Some(&color),
+                    enemy.animation.get_current_sprite(),
+                );
+
+                let white_sprite = drawer.white_sprite();
+
+                if let Some((attack_space, _)) = enemy.get_attack_space(&view_transform) {
+                    drawer.draw_square_slow(
+                        Some(&attack_space),
+                        Some(&EngineColor::GREEN),
+                        white_sprite,
+                    );
+                }
+
+                // Draw enemy health bar
+                drawer.draw_square_slow(
+                    Some(&enemy.health_bar_space(&view_transform, true)),
+                    Some(&EngineColor::RED.additive_darken(0.7)),
+                    white_sprite,
+                );
+                drawer.draw_square_slow(
+                    Some(&enemy.health_bar_space(&view_transform, false)),
+                    Some(&EngineColor::RED),
+                    white_sprite,
+                );
+
+                // Draw enemy poise bar
+                drawer.draw_square_slow(
+                    Some(&enemy.poise_bar_space(&view_transform, true)),
+                    Some(&EngineColor::YELLOW.additive_darken(0.7)),
+                    white_sprite,
+                );
+                drawer.draw_square_slow(
+                    Some(&enemy.poise_bar_space(&view_transform, false)),
+                    Some(&EngineColor::YELLOW),
+                    white_sprite,
+                );
+            }
+        }
+
         let color = if self.player.health > 0.0 {
             EngineColor::WHITE
         } else {
@@ -1233,10 +1507,24 @@ impl Game {
             white_sprite,
         );
 
+        // Render healing flasks
+        let flask_index = ((self.player.max_healing_flasks - self.player.healing_flasks) * 4)
+            / self.player.max_healing_flasks;
+        let flask_sprite = self.ui_sheet.get_sprite([0, flask_index]).unwrap();
+        drawer.draw_square_slow(
+            Some(
+                &ui_transform
+                    .translate(Vec3::new(8.0, 240.0 - 32.0 - 8.0, 0.0))
+                    .scale(Vec3::new(32.0, 32.0, 1.0)),
+            ),
+            Some(&EngineColor::WHITE),
+            flask_sprite,
+        );
+
         drawer.draw_text_slow(
-            &self.test_text,
-            20.0,
-            0.0,
+            &self.num_flasks_text,
+            8.0 + 32.0,
+            240.0 - 16.0 - 8.0,
             1.0,
             GlyphonColor::rgba(255, 255, 255, 255),
         );

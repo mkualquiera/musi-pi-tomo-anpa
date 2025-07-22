@@ -4,7 +4,10 @@ use glyphon::{
     Attrs, Buffer, Cache, Color, FontSystem, Metrics, Resolution, SwashCache, TextArea, TextAtlas,
     TextBounds, TextRenderer, Viewport,
 };
+use rand::rand_core::le;
 use wgpu::{Device, MultisampleState, TextureFormat};
+
+use crate::renderer::RenderingSystem;
 
 pub struct TextRenderPipeline {
     font_system: FontSystem,
@@ -24,7 +27,9 @@ pub struct FeaturedTextBuffer {
 }
 
 impl FeaturedTextBuffer {
-    pub fn set_text(&mut self, pipeline: &mut TextRenderPipeline, text: &str) {
+    pub fn set_text(&mut self, rendering_system: &mut RenderingSystem, text: &str) {
+        let pipeline = rendering_system.text_pipeline.clone();
+        let mut pipeline = pipeline.borrow_mut();
         self.text = text.to_string();
         self.buffer.set_text(
             &mut pipeline.font_system,
