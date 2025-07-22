@@ -200,7 +200,13 @@ impl RenderingSystem {
         }
     }
 
-    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
+    pub fn resize(&mut self, mut new_size: winit::dpi::PhysicalSize<u32>) {
+        if new_size.width > 2047 {
+            new_size.width = 2047;
+        }
+        if new_size.height > 2047 {
+            new_size.height = 2047;
+        }
         if new_size.width > 0 && new_size.height > 0 {
             let new_aspect_ratio = new_size.width as f32 / new_size.height as f32;
             let (width, height) = if new_aspect_ratio > self.target_aspect_ratio {
