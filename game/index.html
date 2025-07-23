@@ -42,6 +42,150 @@
             margin-top: 20px;
             display: none;
         }
+
+        /* Mobile Controller Styles */
+        #mobile-controller {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            /* Hidden by default, shown on mobile */
+            width: 100%;
+            max-width: 400px;
+            height: 120px;
+            z-index: 1000;
+        }
+
+        .controller-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            height: 100%;
+            padding: 0 20px;
+            box-sizing: border-box;
+        }
+
+        /* D-Pad (WASD) */
+        .dpad {
+            position: relative;
+            width: 100px;
+            height: 100px;
+        }
+
+        .dpad-btn {
+            position: absolute;
+            width: 30px;
+            height: 30px;
+            background: linear-gradient(145deg, #4a4a4a, #2a2a2a);
+            border: 2px solid #666;
+            border-radius: 6px;
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            touch-action: manipulation;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            transition: all 0.1s ease;
+        }
+
+        .dpad-btn:active {
+            background: linear-gradient(145deg, #2a2a2a, #4a4a4a);
+            transform: scale(0.95);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+        }
+
+        .dpad-up {
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .dpad-down {
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .dpad-left {
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        .dpad-right {
+            right: 0;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        /* Action Buttons */
+        .action-buttons {
+            display: flex;
+            gap: 15px;
+        }
+
+        .action-btn {
+            width: 50px;
+            height: 50px;
+            background: linear-gradient(145deg, #6a4c93, #4a2c73);
+            border: 3px solid #8a6cb3;
+            border-radius: 50%;
+            color: white;
+            font-weight: bold;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            touch-action: manipulation;
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4);
+            transition: all 0.1s ease;
+        }
+
+        .action-btn:active {
+            background: linear-gradient(145deg, #4a2c73, #6a4c93);
+            transform: scale(0.9);
+            box-shadow: 0 3px 6px rgba(0, 0, 0, 0.4);
+        }
+
+        /* Mobile detection and visibility */
+        @media (max-width: 768px) {
+            #mobile-controller {
+                display: block;
+            }
+
+            /* Adjust canvas size on mobile to leave room for controller */
+            canvas {
+                max-height: calc(90% - 140px);
+            }
+        }
+
+        /* Touch-specific styles */
+        @media (hover: none) and (pointer: coarse) {
+            #mobile-controller {
+                display: block;
+            }
+
+            canvas {
+                max-height: calc(90% - 140px);
+            }
+        }
+
+        /* Prevent text selection on touch */
+        .dpad-btn,
+        .action-btn {
+            -webkit-tap-highlight-color: transparent;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            -khtml-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+        }
     </style>
 </head>
 
@@ -51,6 +195,90 @@
         <div id="error"></div>
     </div>
 
+    <!-- Mobile Controller -->
+    <div id="mobile-controller">
+        <div class="controller-container">
+            <!-- D-Pad (WASD) -->
+            <div class="dpad">
+                <button class="dpad-btn dpad-up" data-key="w" data-code="87">W</button>
+                <button class="dpad-btn dpad-left" data-key="a" data-code="65">A</button>
+                <button class="dpad-btn dpad-down" data-key="s" data-code="83">S</button>
+                <button class="dpad-btn dpad-right" data-key="d" data-code="68">D</button>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="action-buttons">
+                <button class="action-btn" data-key="l" data-code="76">L</button>
+                <button class="action-btn" data-key="h" data-code="72">H</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Function to send keyboard events to the canvas
+        function sendKeyEvent(key, code, eventType) {
+            const canvas = document.querySelector('canvas');
+            if (!canvas) return;
+
+            const event = new KeyboardEvent(eventType, {
+                key: key,
+                code: `Key${key.toUpperCase()}`,
+                keyCode: code,
+                which: code,
+                bubbles: true,
+                cancelable: true
+            });
+            canvas.dispatchEvent(event);
+        }
+
+        // Initialize controller buttons
+        function initController() {
+            const buttons = document.querySelectorAll('.dpad-btn, .action-btn');
+
+            buttons.forEach(button => {
+                const key = button.dataset.key;
+                const code = parseInt(button.dataset.code);
+
+                // Mouse events
+                button.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    sendKeyEvent(key, code, 'keydown');
+                });
+
+                button.addEventListener('mouseup', (e) => {
+                    e.preventDefault();
+                    sendKeyEvent(key, code, 'keyup');
+                });
+
+                button.addEventListener('mouseleave', (e) => {
+                    e.preventDefault();
+                    sendKeyEvent(key, code, 'keyup');
+                });
+
+                // Touch events for mobile
+                button.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    sendKeyEvent(key, code, 'keydown');
+                });
+
+                button.addEventListener('touchend', (e) => {
+                    e.preventDefault();
+                    sendKeyEvent(key, code, 'keyup');
+                });
+
+                button.addEventListener('touchcancel', (e) => {
+                    e.preventDefault();
+                    sendKeyEvent(key, code, 'keyup');
+                });
+            });
+        }
+
+        // Initialize when DOM is loaded
+        document.addEventListener('DOMContentLoaded', initController);
+
+        // Also initialize after a short delay in case canvas loads later
+        setTimeout(initController, 1000);
+    </script>
 </body>
 
 </html>
