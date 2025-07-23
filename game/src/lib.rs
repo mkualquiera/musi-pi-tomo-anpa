@@ -236,7 +236,7 @@ impl ApplicationHandler for WebApp {
         container.append_child(&canvas).unwrap();
 
         let status_div = document.get_element_by_id("status").unwrap();
-        status_div.set_text_content(Some("Loaded!"));
+        status_div.set_text_content(Some(""));
 
         let (target_w, target_h) = Game::target_size();
         let alignment_hint = Game::alignment_hint();
