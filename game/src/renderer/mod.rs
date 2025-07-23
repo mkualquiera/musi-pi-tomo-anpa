@@ -199,17 +199,11 @@ impl RenderingSystem {
             original_size: (width, height),
         }
     }
-
-    pub fn resize(&mut self, mut new_size: winit::dpi::PhysicalSize<u32>) {
-        if new_size.width > 2047 {
-            new_size.width = 2047;
-        }
-        if new_size.height > 2047 {
-            new_size.height = 2047;
-        }
+    pub fn resize(&mut self, new_size: winit::dpi::PhysicalSize<u32>) {
         if new_size.width > 0 && new_size.height > 0 {
+            // First, calculate what size we'd want to maintain aspect ratio
             let new_aspect_ratio = new_size.width as f32 / new_size.height as f32;
-            let (width, height) = if new_aspect_ratio > self.target_aspect_ratio {
+            let (mut width, mut height) = if new_aspect_ratio > self.target_aspect_ratio {
                 (
                     new_size.width,
                     (new_size.width as f32 / self.target_aspect_ratio) as u32,
@@ -220,10 +214,20 @@ impl RenderingSystem {
                     new_size.height,
                 )
             };
+
+            // Now scale down if either dimension exceeds 2047
+            if width > 2047 || height > 2047 {
+                let scale_factor = (2047.0 / width as f32).min(2047.0 / height as f32);
+                width = (width as f32 * scale_factor) as u32;
+                height = (height as f32 * scale_factor) as u32;
+            }
+
+            // Apply alignment
             let (width, height) = (
                 width / self.alignment_hint * self.alignment_hint,
                 height / self.alignment_hint * self.alignment_hint,
             );
+
             self.size = winit::dpi::PhysicalSize::new(width, height);
             self.config.width = width;
             self.config.height = height;
