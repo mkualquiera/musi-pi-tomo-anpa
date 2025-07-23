@@ -46,44 +46,51 @@
         /* Mobile Controller Styles */
         #mobile-controller {
             position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
+            bottom: 0;
+            left: 0;
+            right: 0;
             display: none;
             /* Hidden by default, shown on mobile */
-            width: 100%;
-            max-width: 400px;
-            height: 120px;
+            height: 25vh;
+            /* Use viewport height for consistent sizing */
+            min-height: 120px;
             z-index: 1000;
+            pointer-events: none;
+            /* Allow clicks to pass through empty areas */
         }
 
         .controller-container {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            position: relative;
             width: 100%;
             height: 100%;
-            padding: 0 20px;
-            box-sizing: border-box;
         }
 
-        /* D-Pad (WASD) */
+        /* D-Pad (WASD) - Bottom Left */
         .dpad {
-            position: relative;
-            width: 100px;
-            height: 100px;
+            position: absolute;
+            top: 0vh;
+            left: 5vw;
+            width: 35vw;
+            height: 35vw;
+            min-width: 80px;
+            min-height: 80px;
+            pointer-events: auto;
         }
 
         .dpad-btn {
             position: absolute;
-            width: 0.2vh;
-            height: 0.2vh;
+            width: 12vw;
+            height: 12vw;
+            min-width: 28px;
+            min-height: 28px;
             background: linear-gradient(145deg, #4a4a4a, #2a2a2a);
             border: 2px solid #666;
-            border-radius: 6px;
+            border-radius: 1.5vw;
             color: white;
             font-weight: bold;
-            font-size: 14px;
+            font-size: 3vw;
+            max-font-size: 16px;
+            min-font-size: 12px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -91,6 +98,7 @@
             touch-action: manipulation;
             box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
             transition: all 0.1s ease;
+            pointer-events: auto;
         }
 
         .dpad-btn:active {
@@ -123,21 +131,29 @@
             transform: translateY(-50%);
         }
 
-        /* Action Buttons */
+        /* Action Buttons - Bottom Right */
         .action-buttons {
+            position: absolute;
+            top: 0vh;
+            right: 5vw;
             display: flex;
-            gap: 15px;
+            gap: 3vw;
+            pointer-events: auto;
         }
 
         .action-btn {
-            width: 50px;
-            height: 50px;
+            width: 12vw;
+            height: 12vw;
+            min-width: 45px;
+            min-height: 45px;
             background: linear-gradient(145deg, #6a4c93, #4a2c73);
             border: 3px solid #8a6cb3;
             border-radius: 50%;
             color: white;
             font-weight: bold;
-            font-size: 16px;
+            font-size: 4vw;
+            max-font-size: 20px;
+            min-font-size: 14px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -145,6 +161,7 @@
             touch-action: manipulation;
             box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4);
             transition: all 0.1s ease;
+            pointer-events: auto;
         }
 
         .action-btn:active {
@@ -161,7 +178,8 @@
 
             /* Adjust canvas size on mobile to leave room for controller */
             canvas {
-                max-height: calc(90% - 140px);
+                max-height: calc(90% - 25vh);
+                min-height: calc(90% - 200px);
             }
         }
 
@@ -172,7 +190,8 @@
             }
 
             canvas {
-                max-height: calc(90% - 140px);
+                max-height: calc(90% - 25vh);
+                min-height: calc(90% - 200px);
             }
         }
 
@@ -198,7 +217,7 @@
     <!-- Mobile Controller -->
     <div id="mobile-controller">
         <div class="controller-container">
-            <!-- D-Pad (WASD) -->
+            <!-- D-Pad (WASD) - Bottom Left -->
             <div class="dpad">
                 <button class="dpad-btn dpad-up" data-key="w" data-code="87">W</button>
                 <button class="dpad-btn dpad-left" data-key="a" data-code="65">A</button>
@@ -206,10 +225,11 @@
                 <button class="dpad-btn dpad-right" data-key="d" data-code="68">D</button>
             </div>
 
-            <!-- Action Buttons -->
+            <!-- Action Buttons - Bottom Right -->
             <div class="action-buttons">
-                <button class="action-btn" data-key="l" data-code="76">L</button>
                 <button class="action-btn" data-key="h" data-code="72">H</button>
+                <button class="action-btn" data-key="l" data-code="76">L</button>
+
             </div>
         </div>
     </div>
