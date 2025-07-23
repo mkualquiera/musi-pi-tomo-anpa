@@ -1599,8 +1599,7 @@ impl Game {
         );
 
         // Render healing flasks
-        let flask_index = ((self.player.max_healing_flasks - self.player.healing_flasks) * 4)
-            / self.player.max_healing_flasks;
+        let flask_index = (self.player.healing_flasks * 4) / self.player.max_healing_flasks;
         let flask_sprite = self.ui_sheet_32.get_sprite([0, flask_index]).unwrap();
         drawer.draw_square_slow(
             Some(
