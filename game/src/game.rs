@@ -1119,6 +1119,8 @@ pub struct Game {
 
     num_crystals_text: FeaturedTextBuffer,
     crystal_count_buffer: CrystalCountBuffer,
+
+    test_sheet: GizmoSpriteSheet,
 }
 
 impl Game {
@@ -1228,11 +1230,18 @@ impl Game {
                 )
                 .expect("Failed to load level"),
             ),
+
             ui_sheet_16,
             ui_sheet_32,
             num_flasks_text,
             num_crystals_text,
             crystal_count_buffer: CrystalCountBuffer::new(0.0, 10.0),
+            test_sheet: rendering_system.gizmo_sprite_sheet_from_encoded_image(
+                include_bytes!("assets/fountain/test_processed.png"),
+                [0.0, 0.0],
+                [1.0, 1.0],
+                [1, 1],
+            ),
         }
     }
 
@@ -1487,6 +1496,16 @@ impl Game {
             current_level.spec.decoration.get_sprite([0, 0]).unwrap(),
         );
 
+        drawer.draw_square_slow(
+            Some(
+                &view_transform
+                    .translate(Vec3::new(8.0, 8.0, 0.0))
+                    .scale(Vec3::new(4.0, 4.0, 1.0)),
+            ),
+            Some(&EngineColor::WHITE),
+            self.test_sheet.get_sprite([0, 0]).unwrap(),
+        );
+
         // Draw enemies
         for enemy in &current_level.enemies {
             if enemy.health > 0.0 {
@@ -1579,24 +1598,24 @@ impl Game {
         );
 
         // Draw player poise
-        drawer.draw_square_slow(
-            Some(
-                &ui_transform
-                    .translate(Vec3::new(16.0, 32.0, 0.0))
-                    .scale(Vec3::new(100.0, 16.0, 1.0)),
-            ),
-            Some(&EngineColor::YELLOW.additive_darken(0.7)),
-            white_sprite,
-        );
-        drawer.draw_square_slow(
-            Some(
-                &ui_transform
-                    .translate(Vec3::new(16.0, 32.0, 0.0))
-                    .scale(Vec3::new(self.player.poise * 2.0, 16.0, 1.0)),
-            ),
-            Some(&EngineColor::YELLOW),
-            white_sprite,
-        );
+        //drawer.draw_square_slow(
+        //    Some(
+        //        &ui_transform
+        //            .translate(Vec3::new(16.0, 32.0, 0.0))
+        //            .scale(Vec3::new(100.0, 16.0, 1.0)),
+        //    ),
+        //    Some(&EngineColor::YELLOW.additive_darken(0.7)),
+        //    white_sprite,
+        //);
+        //drawer.draw_square_slow(
+        //    Some(
+        //        &ui_transform
+        //            .translate(Vec3::new(16.0, 32.0, 0.0))
+        //            .scale(Vec3::new(self.player.poise * 2.0, 16.0, 1.0)),
+        //    ),
+        //    Some(&EngineColor::YELLOW),
+        //    white_sprite,
+        //);
 
         // Render healing flasks
         let flask_index = (self.player.healing_flasks * 4) / self.player.max_healing_flasks;
